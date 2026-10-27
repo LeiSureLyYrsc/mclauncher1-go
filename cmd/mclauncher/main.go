@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -13,10 +14,10 @@ func main() {
 	qt.QCoreApplication_SetApplicationName("MClauncher")
 	qt.QCoreApplication_SetOrganizationName("忘却的旋律")
 
-	ui.ApplyAppFont(nil)
-
-	win := ui.NewMainWindow()
-	win.Show()
+	if err := ui.LoadMainQML(); err != nil {
+		fmt.Fprintf(os.Stderr, "QML load failed: %v\n", err)
+		os.Exit(1)
+	}
 
 	os.Exit(qt.QApplication_Exec())
 }
