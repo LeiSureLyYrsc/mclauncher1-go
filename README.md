@@ -80,27 +80,28 @@ GitHub Actions（[`.github/workflows/build.yml`](.github/workflows/build.yml)）
 - **pull_request**
 - **tags**：`v*`（例如 `v0.1.0`）
 
+**单文件分发（推荐）**：CI 会把 Qt6/QML 运行时打进一个自解压（SFX）文件。干净机器无需再装 MinGW/Qt DLL / `.so`。说明见 [`packaging/README.md`](packaging/README.md)。
+
+### 如何下载
+
+1. 打开 [Actions → Build](https://github.com/LeiSureLyYrsc/mclauncher1-go/actions/workflows/build.yml)
+2. 点开最新成功的 run → Artifacts
+3. 下载：
+   - **Windows**：`mclauncher-windows-amd64` → 得到 **`mclauncher-windows-amd64.exe`**（双击即可；首次运行会解压到 `%TEMP%`）
+   - **Linux**：`mclauncher-linux-amd64` → 得到同名可执行文件（`chmod +x` 后运行；首次解压到 `/tmp`）
+4. 可选：`*-zip` / `*-dir` 是未包装的部署目录，便于调试
+
+打 `v*` 标签时，上述单文件会挂到 GitHub Release。
+
 ### Linux（`ubuntu-latest`）
 
-安装 Qt6 + miqt QML 依赖，按 `go.mod` 安装 Go，执行：
-
-```bash
-go build -ldflags '-s -w' -o mclauncher ./cmd/mclauncher
-```
-
-产物 Artifact：`mclauncher-linux-amd64`。打 `v*` 标签时挂到 Release。
+安装 Qt6 + miqt QML 依赖 → `go build` → `bundle-linux-qt.sh` 收集 `.so`/plugins/qml → `make-sfx.sh` 生成单文件。
 
 ### Windows（`windows-latest`）
 
-按 [miqt](https://github.com/mappu/miqt) 文档使用 **MSYS2 UCRT64 MinGW**（CGO 不兼容 MSVC）：`setup-go` 读取 `go.mod`，再用 `msys2/setup-msys2` 安装 `gcc` / `pkg-config` / `qt6-base` / `qt6-declarative`，执行：
+MSYS2 UCRT64 MinGW（CGO 不兼容 MSVC）→ `go build` → `windeployqt --qmldir qml`（并始终附带 `libgcc`/`libstdc++`/`libwinpthread`）→ `make-sfx.sh` 生成 **`mclauncher-windows-amd64.exe`**。
 
-```bash
-go build -ldflags "-s -w" -o mclauncher.exe ./cmd/mclauncher
-```
-
-产物 Artifact：`mclauncher-windows-amd64`（`mclauncher.exe`）。打 `v*` 标签时与 Linux 一并挂到 Release。
-
-> 当前为动态链接 Qt6：本机运行还需对应 MinGW Qt / 运行时 DLL（或自行 `windeployqt`）；纯 exe 不一定能在未装 Qt 的 Windows 上直接启动。
+> 为何不用 Enigma/BoxedApp 等“真·单 EXE 虚拟文件系统”：Qt Quick 的 QML 模块/插件需要真实目录树，这类 packer 经常把 QML 搞挂。SFX（解压到临时目录再启动）是 Qt QML 最稳妥的“下下来只有一个文件”方案。
 
 ## License
 

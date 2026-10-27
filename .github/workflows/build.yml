@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-linux:
-    name: Linux (Qt6 / miqt)
+    name: Linux (Qt6 / miqt + SFX)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -38,7 +38,8 @@ jobs:
             qml6-module-qtquick-window \
             qml6-module-qtquick-dialogs \
             qml6-module-qtqml \
-            qml6-module-qtqml-workerscript
+            qml6-module-qtqml-workerscript \
+            zip
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -51,24 +52,50 @@ jobs:
           CGO_ENABLED: "1"
         run: go build -ldflags '-s -w' -o mclauncher ./cmd/mclauncher
 
-      - name: Upload artifact
+      - name: Bundle Qt runtime + build single-file SFX
+        run: |
+          set -eu
+          chmod +x packaging/scripts/bundle-linux-qt.sh packaging/scripts/make-sfx.sh
+          # Deploy tree (libs/plugins/qml) — separate name from the final SFX binary.
+          ./packaging/scripts/bundle-linux-qt.sh ./mclauncher dist/mclauncher-linux-amd64-dir
+          ./packaging/scripts/make-sfx.sh \
+            dist/mclauncher-linux-amd64-dir \
+            dist/mclauncher-linux-amd64 \
+            mclauncher
+          chmod +x dist/mclauncher-linux-amd64
+          # Optional: keep deploy tree as tar.gz for debugging.
+          tar -C dist -czf dist/mclauncher-linux-amd64-dir.tar.gz mclauncher-linux-amd64-dir
+          ls -la dist/mclauncher-linux-amd64 dist/mclauncher-linux-amd64-dir.tar.gz
+          # Sanity: SFX trailer magic present
+          python3 -c "p=open('dist/mclauncher-linux-amd64','rb').read(); assert p[-8:]==b'MCLSFX01', p[-16:]"
+
+      - name: Upload artifact (single-file SFX)
         uses: actions/upload-artifact@v4
         with:
           name: mclauncher-linux-amd64
-          path: mclauncher
+          path: dist/mclauncher-linux-amd64
           if-no-files-found: error
+
+      - name: Upload artifact (optional deploy tree)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mclauncher-linux-amd64-dir
+          path: dist/mclauncher-linux-amd64-dir.tar.gz
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Attach binary to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: mclauncher
+          files: |
+            dist/mclauncher-linux-amd64
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-windows:
-    name: Windows (Qt6 / miqt MinGW)
+    name: Windows (Qt6 / miqt MinGW + SFX)
     runs-on: windows-latest
     permissions:
       contents: write
@@ -101,6 +128,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-tools
             zip
+            python
 
       - name: Build
         shell: msys2 {0}
@@ -127,7 +155,7 @@ jobs:
           ls -la mclauncher.exe
 
       # Bare exe needs MinGW runtime + Qt6 DLLs on PATH / next to the binary.
-      # Package a self-contained zip so CI artifacts run without a full MSYS2 install.
+      # Deploy with windeployqt, then wrap as a single-file Go SFX for clean PCs.
       - name: Package Windows runtime (windeployqt + MinGW DLLs)
         shell: msys2 {0}
         run: |
@@ -237,18 +265,46 @@ jobs:
           (cd dist && zip -q -r mclauncher-windows-amd64.zip mclauncher-windows-amd64)
           ls -la dist/mclauncher-windows-amd64.zip
 
-      - name: Upload artifact
+      - name: Build single-file SFX exe
+        shell: msys2 {0}
+        run: |
+          set -eu
+          export PATH="/ucrt64/bin:${PATH}"
+          if ! command -v go >/dev/null 2>&1; then
+            if [ -n "${GOROOT:-}" ]; then
+              export PATH="$(cygpath -u "${GOROOT}")/bin:${PATH}"
+            fi
+          fi
+          chmod +x packaging/scripts/make-sfx.sh
+          ./packaging/scripts/make-sfx.sh \
+            dist/mclauncher-windows-amd64 \
+            dist/mclauncher-windows-amd64.exe \
+            mclauncher.exe
+          ls -la dist/mclauncher-windows-amd64.exe
+          python3 -c "p=open('dist/mclauncher-windows-amd64.exe','rb').read(); assert p[-8:]==b'MCLSFX01', p[-16:]"
+
+      - name: Upload artifact (single-file SFX)
         uses: actions/upload-artifact@v4
         with:
           name: mclauncher-windows-amd64
+          path: dist/mclauncher-windows-amd64.exe
+          if-no-files-found: error
+
+      - name: Upload artifact (optional zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mclauncher-windows-amd64-zip
           path: dist/mclauncher-windows-amd64.zip
           if-no-files-found: error
+          retention-days: 14
 
       - name: Attach binary to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/mclauncher-windows-amd64.zip
+          files: |
+            dist/mclauncher-windows-amd64.exe
+            dist/mclauncher-windows-amd64.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
