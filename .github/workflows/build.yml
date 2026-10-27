@@ -127,6 +127,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-binutils
             zip
             python
 
@@ -167,14 +168,52 @@ jobs:
           mkdir -p "$DEST"
           cp -f mclauncher.exe "$DEST/"
 
-          # MinGW + Qt transitive deps. windeployqt copies Qt6*.dll and plugins but
-          # does NOT ship ICU/zlib/pcre/freetype/etc. Skipping this is why clean
-          # Windows PCs fail to start (missing DLL, often invisible under SFX).
-          copy_mingw_qt_deps() {
-            echo "Copying MinGW/Qt dependency DLLs from /ucrt64/bin"
-            # Save/restore nullglob: leaving it on makes require_glob "$DEST"/libicu*.dll
-            # expand to zero args under set -u → "$1: unbound variable".
-            _nullglob_was=$(shopt -p nullglob || true)
+          WDQ=""
+          for cand in windeployqt-qt6 windeployqt6 windeployqt; do
+            if command -v "$cand" >/dev/null 2>&1; then
+              WDQ="$cand"
+              break
+            fi
+          done
+
+          DEPLOYED=0
+          if [ -n "$WDQ" ]; then
+            echo "Using $WDQ"
+            if "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
+              DEPLOYED=1
+            elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
+              DEPLOYED=1
+            else
+              echo "windeployqt failed; falling back to manual plugin/qml copy" >&2
+              tail -n 40 /tmp/windeployqt.log >&2 || true
+            fi
+          else
+            echo "windeployqt not found; falling back to manual plugin/qml copy"
+          fi
+
+          if [ "$DEPLOYED" -eq 0 ]; then
+            echo "Copying common Qt6 plugins/qml from /ucrt64 (fallback)"
+            for plugindir in platforms styles imageformats tls networkinformation iconengines generic; do
+              if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
+                mkdir -p "$DEST/$plugindir"
+                cp -f /ucrt64/share/qt6/plugins/"$plugindir"/*.dll "$DEST/$plugindir/" 2>/dev/null || true
+              fi
+            done
+            if [ -d /ucrt64/share/qt6/qml ]; then
+              mkdir -p "$DEST/qml"
+              cp -a /ucrt64/share/qt6/qml/QtQml "$DEST/qml/" 2>/dev/null || true
+              cp -a /ucrt64/share/qt6/qml/QtQuick "$DEST/qml/" 2>/dev/null || true
+              cp -a /ucrt64/share/qt6/qml/QML "$DEST/qml/" 2>/dev/null || true
+            fi
+          else
+            echo "windeployqt ok (log: /tmp/windeployqt.log)"
+          fi
+
+          # ALWAYS copy MinGW/Qt transitive deps. windeployqt does not ship ICU/zlib/pcre/etc.
+          # Run in a subshell so `shopt -s nullglob` cannot leak (leaking + set -u made
+          # require_glob "$DEST"/libicu*.dll expand to zero args → "$1: unbound variable").
+          echo "Copying MinGW/Qt dependency DLLs from /ucrt64/bin"
+          (
             shopt -s nullglob
             for pattern in \
               Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6OpenGL.dll \
@@ -192,131 +231,102 @@ jobs:
               libintl-8.dll libmd4c.dll libpcre2-16-0.dll libpcre2-8-0.dll \
               libpng16-16.dll libzstd.dll zlib1.dll \
               libssl-3-x64.dll libcrypto-3-x64.dll \
-              libEGL.dll libGLESv2.dll opengl32sw.dll D3Dcompiler_47.dll; do
+              libEGL.dll libGLESv2.dll opengl32sw.dll D3Dcompiler_47.dll
+            do
               for f in /ucrt64/bin/$pattern; do
-                # if/fi (not "test && cp"): last missing optional DLL must not make
-                # this function return 1 under set -e.
                 if [ -f "$f" ]; then
                   cp -f "$f" "$DEST/"
                 fi
               done
             done
-            eval "$_nullglob_was" 2>/dev/null || shopt -u nullglob
-            unset _nullglob_was
-            return 0
-          }
+          )
 
-          copy_qt_plugins_fallback() {
-            echo "Copying common Qt6 plugins/qml from /ucrt64 (fallback)"
-            _nullglob_was=$(shopt -p nullglob || true)
-            shopt -s nullglob
-            for plugindir in platforms styles imageformats tls networkinformation iconengines generic; do
-              if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
-                mkdir -p "$DEST/$plugindir"
-                cp -f /ucrt64/share/qt6/plugins/$plugindir/*.dll "$DEST/$plugindir/" 2>/dev/null || true
-              fi
-            done
-            if [ -d /ucrt64/share/qt6/qml ]; then
-              mkdir -p "$DEST/qml"
-              cp -a /ucrt64/share/qt6/qml/QtQml "$DEST/qml/" 2>/dev/null || true
-              cp -a /ucrt64/share/qt6/qml/QtQuick "$DEST/qml/" 2>/dev/null || true
-              cp -a /ucrt64/share/qt6/qml/QML "$DEST/qml/" 2>/dev/null || true
-            fi
-            eval "$_nullglob_was" 2>/dev/null || shopt -u nullglob
-            unset _nullglob_was
-            return 0
-          }
+          # Recursively copy PE imports still missing from /ucrt64/bin (name variants).
+          python3 -c '
+import re, subprocess, sys
+from pathlib import Path
+dest, ucrt = Path(sys.argv[1]), Path("/ucrt64/bin")
+dll_re = re.compile(r"DLL Name:\s+(\S+\.dll)", re.I)
+sys_dll = {x.lower() for x in [
+  "kernel32.dll","user32.dll","gdi32.dll","shell32.dll","advapi32.dll","ole32.dll",
+  "oleaut32.dll","ws2_32.dll","winmm.dll","imm32.dll","version.dll","dwmapi.dll",
+  "uxtheme.dll","ntdll.dll","opengl32.dll","d3d11.dll","dxgi.dll","dwrite.dll",
+  "comdlg32.dll","comctl32.dll","netapi32.dll","userenv.dll","crypt32.dll","bcrypt.dll",
+  "secur32.dll","iphlpapi.dll","mpr.dll","dnsapi.dll","authz.dll","shlwapi.dll",
+  "shcore.dll","msvcrt.dll","ucrtbase.dll","nsi.dll","win32u.dll","rpcrt4.dll",
+  "sechost.dll","combase.dll","setupapi.dll","wtsapi32.dll","d3d12.dll","dbghelp.dll",
+]}
+def imports(pe):
+  try:
+    out = subprocess.check_output(["objdump","-p",str(pe)], stderr=subprocess.DEVNULL, text=True, errors="replace")
+  except Exception:
+    return []
+  return [m.group(1) for m in dll_re.finditer(out)]
+ucrt_index = {p.name.lower(): p for p in ucrt.glob("*.dll")}
+changed, rounds = True, 0
+while changed and rounds < 20:
+  changed = False
+  rounds += 1
+  for pe in list(dest.rglob("*.dll")) + list(dest.rglob("*.exe")):
+    for name in imports(pe):
+      low = name.lower()
+      if low in sys_dll: continue
+      if any((dest/n).exists() for n in (name, name.lower(), Path(name).name)): continue
+      src = ucrt_index.get(low)
+      if src is None: continue
+      print("copy missing dep", src.name)
+      (dest/src.name).write_bytes(src.read_bytes())
+      changed = True
+' "$DEST"
 
-          WDQ=""
-          for cand in windeployqt-qt6 windeployqt6 windeployqt; do
-            if command -v "$cand" >/dev/null 2>&1; then
-              WDQ="$cand"
-              break
-            fi
-          done
-
-          DEPLOYED=0
-          if [ -n "$WDQ" ]; then
-            echo "Using $WDQ"
-            # Quiet logs: huge QML deploy spam + Actions log pipe caused exit 141 under pipefail.
-            # --qmldir so QML modules/plugins ship with the app.
-            # Do not fail the job if windeployqt errors — fall back to manual copy.
-            if "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
-              DEPLOYED=1
-            elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
-              DEPLOYED=1
-            else
-              echo "windeployqt failed; falling back to manual plugin/qml copy" >&2
-              tail -n 40 /tmp/windeployqt.log >&2 || true
-            fi
-          else
-            echo "windeployqt not found; falling back to manual plugin/qml copy"
-          fi
-
-          if [ "$DEPLOYED" -eq 0 ]; then
-            copy_qt_plugins_fallback
-          else
-            echo "windeployqt ok (log: /tmp/windeployqt.log)"
-          fi
-
-          # ALWAYS copy MinGW/Qt deps — windeployqt never ships these for MSYS2 builds.
-          copy_mingw_qt_deps
-
-          # qt.conf so Qt resolves platforms/ and qml/ next to the exe.
           if [ ! -f "$DEST/qt.conf" ]; then
             printf '%s\n' '[Paths]' 'Prefix=.' 'Plugins=.' 'QmlImports=qml' 'Libraries=.' > "$DEST/qt.conf"
           fi
 
-          require_file() {
-            # ${1-} so set -u never trips on a missing/empty arg.
-            f="${1-}"
-            if [ -z "$f" ] || [ ! -f "$f" ]; then
-              echo "ERROR: missing required file: ${f:-<empty>}" >&2
-              if [ -n "$f" ]; then
-                ls -la "$(dirname "$f")" >&2 || true
-              else
-                ls -la "$DEST" >&2 || true
-              fi
-              exit 1
+          miss=0
+          check() {
+            local path="$1"
+            if [ ! -f "$path" ]; then
+              echo "ERROR: missing required file: $path" >&2
+              miss=1
             fi
           }
-          require_glob() {
-            # Pass patterns fully quoted (e.g. "$DEST/libicuuc*.dll"). Expanding at
-            # the call site with nullglob on yields zero args → unbound $1 under set -u.
-            pattern="${1-}"
-            if [ -z "$pattern" ]; then
-              echo "ERROR: require_glob called with empty pattern" >&2
-              ls -la "$DEST" >&2 || true
-              exit 1
-            fi
-            if ! compgen -G "$pattern" >/dev/null; then
+          check_glob() {
+            local pattern="$1"
+            # intentional glob; disable nullglob for this check
+            shopt -u nullglob
+            local matches
+            matches=( $pattern )
+            if [ ! -f "${matches[0]:-}" ]; then
               echo "ERROR: no files matching $pattern" >&2
-              ls -la "$DEST" >&2 || true
-              exit 1
+              miss=1
             fi
           }
-          require_file "$DEST/mclauncher.exe"
-          require_file "$DEST/libgcc_s_seh-1.dll"
-          require_file "$DEST/libstdc++-6.dll"
-          require_file "$DEST/libwinpthread-1.dll"
-          require_file "$DEST/platforms/qwindows.dll"
-          # These are required by Qt6Core/Gui on MSYS2 UCRT64; missing = silent fail on clean PCs.
-          require_file "$DEST/libpcre2-16-0.dll"
-          require_file "$DEST/zlib1.dll"
-          require_file "$DEST/libzstd.dll"
-          require_file "$DEST/libdouble-conversion.dll"
-          require_file "$DEST/libb2-1.dll"
-          require_file "$DEST/libfreetype-6.dll"
-          require_file "$DEST/libharfbuzz-0.dll"
-          require_file "$DEST/libmd4c.dll"
-          require_file "$DEST/libpng16-16.dll"
-          # ICU major version varies; require at least one of each family.
-          # Quote the whole pattern so nullglob cannot strip the function argument.
-          require_glob "$DEST/libicuuc*.dll"
-          require_glob "$DEST/libicuin*.dll"
-          require_glob "$DEST/libicudt*.dll"
+          check "$DEST/mclauncher.exe"
+          check "$DEST/libgcc_s_seh-1.dll"
+          check "$DEST/libstdc++-6.dll"
+          check "$DEST/libwinpthread-1.dll"
+          check "$DEST/platforms/qwindows.dll"
+          check "$DEST/libpcre2-16-0.dll"
+          check "$DEST/zlib1.dll"
+          check "$DEST/libzstd.dll"
+          check "$DEST/libdouble-conversion.dll"
+          check "$DEST/libb2-1.dll"
+          check "$DEST/libfreetype-6.dll"
+          check "$DEST/libharfbuzz-0.dll"
+          check "$DEST/libmd4c.dll"
+          check "$DEST/libpng16-16.dll"
+          check_glob "$DEST"/libicuuc*.dll
+          check_glob "$DEST"/libicuin*.dll
+          check_glob "$DEST"/libicudt*.dll
+          if [ "$miss" -ne 0 ]; then
+            echo "---- /ucrt64/bin ICU / key libs (debug) ----" >&2
+            ls -la /ucrt64/bin/libicu*.dll /ucrt64/bin/libb2*.dll /ucrt64/bin/libdouble*.dll /ucrt64/bin/libpcre2*.dll /ucrt64/bin/zlib1.dll /ucrt64/bin/libzstd.dll 2>&1 >&2 || true
+            echo "---- $DEST top dlls ----" >&2
+            ls -la "$DEST"/*.dll 2>&1 | head -80 >&2 || true
+            exit 1
+          fi
 
-          # No pipes: avoid SIGPIPE under any shell options.
           find "$DEST" -type f > /tmp/pkg-list.txt
           sort -o /tmp/pkg-list.txt /tmp/pkg-list.txt
           echo "Packaged files: $(wc -l < /tmp/pkg-list.txt)"
