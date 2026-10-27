@@ -20,11 +20,11 @@ ApplicationWindow {
 
     property url bgSource: typeof bgImageUrl !== "undefined" ? bgImageUrl : "bg_main.jpg"
     property string openDirPath: typeof gameDirPath !== "undefined" ? gameDirPath : "."
-    property var bridge: typeof launcher !== "undefined" ? launcher : null
+    property var ctl: typeof launcher !== "undefined" ? launcher : null
 
     function sendCmd(c) {
-        if (bridge)
-            bridge.cmd = c
+        if (ctl)
+            ctl.cmd = c
     }
 
     // Full-window background via Image (not Canvas paint of the UI).
@@ -73,7 +73,7 @@ ApplicationWindow {
         font.bold: true
         padding: 0
         leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
-        enabled: !(bridge && bridge.busy === "1")
+        enabled: !(ctl && ctl.busy === "1")
         background: WinBtnBg {
             down: btnLaunch.down
             hovered: btnLaunch.hovered
@@ -88,8 +88,8 @@ ApplicationWindow {
             clip: false
         }
         onClicked: {
-            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && bridge)
-                bridge.selectedVersion = combo.currentText
+            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && ctl)
+                ctl.selectedVersion = combo.currentText
             sendCmd("launch")
         }
     }
@@ -102,7 +102,7 @@ ApplicationWindow {
         font.pixelSize: 11
         padding: 0
         leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
-        enabled: !(bridge && bridge.busy === "1")
+        enabled: !(ctl && ctl.busy === "1")
         background: WinBtnBg {
             down: btnUpdate.down
             hovered: btnUpdate.hovered
@@ -117,8 +117,8 @@ ApplicationWindow {
             clip: false
         }
         onClicked: {
-            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && bridge)
-                bridge.selectedVersion = combo.currentText
+            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && ctl)
+                ctl.selectedVersion = combo.currentText
             sendCmd("update")
         }
     }
@@ -201,21 +201,21 @@ ApplicationWindow {
             }
         }
         onActivated: function(index) {
-            if (bridge)
-                bridge.selectedVersion = combo.textAt(index)
+            if (ctl)
+                ctl.selectedVersion = combo.textAt(index)
         }
         Component.onCompleted: {
-            if (bridge && bridge.selectedVersion) {
-                var i = combo.find(bridge.selectedVersion)
+            if (ctl && ctl.selectedVersion) {
+                var i = combo.find(ctl.selectedVersion)
                 if (i >= 0)
                     combo.currentIndex = i
             }
         }
         Connections {
-            target: bridge
+            target: ctl
             function onSelectedVersionChanged() {
-                if (!bridge) return
-                var i = combo.find(bridge.selectedVersion)
+                if (!ctl) return
+                var i = combo.find(ctl.selectedVersion)
                 if (i >= 0)
                     combo.currentIndex = i
             }
@@ -250,7 +250,7 @@ ApplicationWindow {
         id: statusLine
         x: 8; y: 408; width: 560; height: 16
         z: 2
-        text: bridge ? (bridge.status || "") : ""
+        text: ctl ? (ctl.status || "") : ""
         color: "#e8ffffff"
         font.pixelSize: 10
         elide: Text.ElideRight

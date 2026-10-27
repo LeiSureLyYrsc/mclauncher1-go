@@ -13,7 +13,7 @@ Dialog {
     standardButtons: Dialog.NoButton
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    property var bridge: typeof launcher !== "undefined" ? launcher : null
+    property var ctl: typeof launcher !== "undefined" ? launcher : null
 
     background: Rectangle {
         color: "#f0f0f0"
@@ -21,22 +21,22 @@ Dialog {
     }
 
     onAboutToShow: {
-        if (!bridge) return
-        if (bridge.authMode === "authlib")
+        if (!ctl) return
+        if (ctl.authMode === "authlib")
             modeAuthlib.checked = true
         else
             modeOffline.checked = true
-        offlineName.text = bridge.offlineName || "Player"
-        authlibAPI.text = bridge.authlibAPI || ""
-        authlibUser.text = bridge.authlibUser || ""
+        offlineName.text = ctl.offlineName || "Player"
+        authlibAPI.text = ctl.authlibAPI || ""
+        authlibUser.text = ctl.authlibUser || ""
         // Password is ephemeral — never reload from config (scheme 1).
         authlibPass.text = ""
-        javaPath.text = bridge.javaPath || ""
-        mem.value = bridge.maxMemoryMB > 0 ? bridge.maxMemoryMB : 2048
-        debug.checked = (bridge.debug === true || bridge.debug === "true" || bridge.debug === "1")
-        if (bridge.versionFilter === "all")
+        javaPath.text = ctl.javaPath || ""
+        mem.value = ctl.maxMemoryMB > 0 ? ctl.maxMemoryMB : 2048
+        debug.checked = (ctl.debug === true || ctl.debug === "true" || ctl.debug === "1")
+        if (ctl.versionFilter === "all")
             filterAll.checked = true
-        else if (bridge.versionFilter === "snapshot")
+        else if (ctl.versionFilter === "snapshot")
             filterSnap.checked = true
         else
             filterRelease.checked = true
@@ -107,7 +107,7 @@ Dialog {
                         font.pixelSize: 11
                         color: "#555"
                         text: {
-                            var pn = bridge && bridge.profileName ? bridge.profileName : ""
+                            var pn = ctl && ctl.profileName ? ctl.profileName : ""
                             if (pn)
                                 return "已登录角色：" + pn + "（仅保存令牌，不保存密码）"
                             return "外置登录只保存 access/client 令牌与角色信息，不保存密码。"
@@ -118,7 +118,7 @@ Dialog {
                             text: "登录测试"
                             onClicked: {
                                 pushToLauncher()
-                                if (bridge) bridge.cmd = "testLogin"
+                                if (ctl) ctl.cmd = "testLogin"
                                 // Keep field empty after submit so reopen/clear never shows a saved password.
                                 authlibPass.text = ""
                             }
@@ -126,7 +126,7 @@ Dialog {
                         Button {
                             text: "清除登录"
                             onClicked: {
-                                if (bridge) bridge.cmd = "clearAuth"
+                                if (ctl) ctl.cmd = "clearAuth"
                                 authlibUser.text = ""
                                 authlibPass.text = ""
                                 modeOffline.checked = true
@@ -154,9 +154,9 @@ Dialog {
                     Button {
                         text: "嗅探"
                         onClicked: {
-                            if (bridge) bridge.cmd = "sniffJava"
+                            if (ctl) ctl.cmd = "sniffJava"
                             Qt.callLater(function() {
-                                if (bridge) javaPath.text = bridge.javaPath || javaPath.text
+                                if (ctl) javaPath.text = ctl.javaPath || javaPath.text
                             })
                         }
                     }
@@ -200,7 +200,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: bridge ? ("状态：" + (bridge.status || "")) : ""
+            text: ctl ? ("状态：" + (ctl.status || "")) : ""
             color: "#444"
             font.pixelSize: 11
         }
@@ -213,7 +213,7 @@ Dialog {
                 text: "保存设置"
                 onClicked: {
                     pushToLauncher()
-                    if (bridge) bridge.cmd = "saveSettings"
+                    if (ctl) ctl.cmd = "saveSettings"
                     root.accept()
                 }
             }
@@ -225,20 +225,20 @@ Dialog {
     }
 
     function pushToLauncher() {
-        if (!bridge) return
-        bridge.authMode = modeAuthlib.checked ? "authlib" : "offline"
-        bridge.offlineName = offlineName.text || "Player"
-        bridge.authlibAPI = authlibAPI.text
-        bridge.authlibUser = authlibUser.text
+        if (!ctl) return
+        ctl.authMode = modeAuthlib.checked ? "authlib" : "offline"
+        ctl.offlineName = offlineName.text || "Player"
+        ctl.authlibAPI = authlibAPI.text
+        ctl.authlibUser = authlibUser.text
         // Ephemeral: password only for authenticate; never persisted to config.json.
-        bridge.authlibPass = authlibPass.text
-        bridge.javaPath = javaPath.text
-        bridge.maxMemoryMB = mem.value
-        bridge.debug = debug.checked
+        ctl.authlibPass = authlibPass.text
+        ctl.javaPath = javaPath.text
+        ctl.maxMemoryMB = mem.value
+        ctl.debug = debug.checked
         var f = "release"
         if (filterSnap.checked) f = "snapshot"
         if (filterAll.checked) f = "all"
-        bridge.versionFilter = f
+        ctl.versionFilter = f
     }
 
     FileDialog {
