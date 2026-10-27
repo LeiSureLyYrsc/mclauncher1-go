@@ -120,7 +120,7 @@ jobs:
           echo "go=$(command -v go)"
           go version
           echo "gcc=$(command -v gcc)"
-          gcc --version | head -1
+          gcc --version | sed -n '1p'
           pkg-config --modversion Qt6Core
           pkg-config --modversion Qt6Qml || pkg-config --modversion Qt6Declarative || true
           go build -ldflags "-s -w" -o mclauncher.exe ./cmd/mclauncher
@@ -138,21 +138,8 @@ jobs:
           mkdir -p "$DEST"
           cp -f mclauncher.exe "$DEST/"
 
-          WDQ=""
-          for cand in windeployqt-qt6 windeployqt6 windeployqt; do
-            if command -v "$cand" >/dev/null 2>&1; then
-              WDQ="$cand"
-              break
-            fi
-          done
-
-          if [ -n "$WDQ" ]; then
-            echo "Using $WDQ"
-            # --qmldir so QML modules/plugins ship with the app
-            "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe" \
-              || "$WDQ" --qmldir qml "$DEST/mclauncher.exe"
-          else
-            echo "windeployqt not found; copying common Qt6 DLLs from /ucrt64/bin"
+          copy_qt_fallback() {
+            echo "Copying common Qt6 DLLs/plugins from /ucrt64"
             shopt -s nullglob
             for pattern in \
               Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll \
@@ -161,7 +148,6 @@ jobs:
               Qt6QuickLayouts.dll Qt6QuickTemplates2.dll \
               Qt6QuickDialogs2.dll Qt6QuickDialogs2QuickImpl.dll Qt6QuickDialogs2Utils.dll \
               Qt6OpenGL.dll Qt6Svg.dll Qt6SvgWidgets.dll \
-              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
               libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll \
               libdouble-conversion.dll libfreetype-6.dll libglib-2.0-0.dll \
               libgraphite2.dll libharfbuzz-0.dll libiconv-2.dll \
@@ -173,13 +159,47 @@ jobs:
                 [ -f "$f" ] && cp -f "$f" "$DEST/"
               done
             done
-            # Qt plugins commonly required at runtime
             for plugindir in platforms styles imageformats tls networkinformation iconengines; do
               if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
                 mkdir -p "$DEST/$plugindir"
                 cp -f /ucrt64/share/qt6/plugins/$plugindir/*.dll "$DEST/$plugindir/" 2>/dev/null || true
               fi
             done
+            # Best-effort QML runtime modules (windeployqt normally handles this)
+            if [ -d /ucrt64/share/qt6/qml ]; then
+              mkdir -p "$DEST/qml"
+              cp -a /ucrt64/share/qt6/qml/QtQml "$DEST/qml/" 2>/dev/null || true
+              cp -a /ucrt64/share/qt6/qml/QtQuick "$DEST/qml/" 2>/dev/null || true
+              cp -a /ucrt64/share/qt6/qml/QML "$DEST/qml/" 2>/dev/null || true
+            fi
+          }
+
+          WDQ=""
+          for cand in windeployqt-qt6 windeployqt6 windeployqt; do
+            if command -v "$cand" >/dev/null 2>&1; then
+              WDQ="$cand"
+              break
+            fi
+          done
+
+          DEPLOYED=0
+          if [ -n "$WDQ" ]; then
+            echo "Using $WDQ"
+            # --qmldir so QML modules/plugins ship with the app.
+            # Do not fail the job if windeployqt errors — fall back to manual copy.
+            if "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe"; then
+              DEPLOYED=1
+            elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe"; then
+              DEPLOYED=1
+            else
+              echo "windeployqt failed; falling back to manual DLL copy" >&2
+            fi
+          else
+            echo "windeployqt not found; falling back to manual DLL copy"
+          fi
+
+          if [ "$DEPLOYED" -eq 0 ]; then
+            copy_qt_fallback
           fi
 
           # Always ship MinGW runtime next to the exe (fixes missing libgcc_s_seh-1.dll).
@@ -191,8 +211,21 @@ jobs:
             cp -f "/ucrt64/bin/$dll" "$DEST/"
           done
 
+          test -f "$DEST/mclauncher.exe"
+          test -f "$DEST/libgcc_s_seh-1.dll"
+          test -f "$DEST/libstdc++-6.dll"
+          test -f "$DEST/libwinpthread-1.dll"
+
+          # Avoid SIGPIPE/exit 141 under pipefail: never pipe find into head.
           echo "Packaged contents:"
-          find "$DEST" -type f | sort | head -n 200
+          find "$DEST" -type f | sort > /tmp/pkg-list.txt
+          echo "Total files: $(wc -l < /tmp/pkg-list.txt)"
+          sed -n '1,200p' /tmp/pkg-list.txt
+
+          if ! command -v zip >/dev/null 2>&1; then
+            echo "ERROR: zip not found on PATH" >&2
+            exit 1
+          fi
           (cd dist && zip -r mclauncher-windows-amd64.zip mclauncher-windows-amd64)
           ls -la dist/mclauncher-windows-amd64.zip
 
