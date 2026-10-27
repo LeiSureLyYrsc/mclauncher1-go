@@ -80,13 +80,27 @@ GitHub Actions（[`.github/workflows/build.yml`](.github/workflows/build.yml)）
 - **pull_request**
 - **tags**：`v*`（例如 `v0.1.0`）
 
-在 `ubuntu-latest` 上安装 Qt6 + miqt QML 依赖，按 `go.mod` 安装 Go，执行：
+### Linux（`ubuntu-latest`）
+
+安装 Qt6 + miqt QML 依赖，按 `go.mod` 安装 Go，执行：
 
 ```bash
 go build -ldflags '-s -w' -o mclauncher ./cmd/mclauncher
 ```
 
-产物上传为 Artifact（`mclauncher-linux-amd64`）。打 `v*` 标签时会将 Linux 二进制挂到对应 Release。Windows 交叉编译需 Qt 工具链，暂未纳入 CI。
+产物 Artifact：`mclauncher-linux-amd64`。打 `v*` 标签时挂到 Release。
+
+### Windows（`windows-latest`）
+
+按 [miqt](https://github.com/mappu/miqt) 文档使用 **MSYS2 UCRT64 MinGW**（CGO 不兼容 MSVC）：`setup-go` 读取 `go.mod`，再用 `msys2/setup-msys2` 安装 `gcc` / `pkg-config` / `qt6-base` / `qt6-declarative`，执行：
+
+```bash
+go build -ldflags "-s -w" -o mclauncher.exe ./cmd/mclauncher
+```
+
+产物 Artifact：`mclauncher-windows-amd64`（`mclauncher.exe`）。打 `v*` 标签时与 Linux 一并挂到 Release。
+
+> 当前为动态链接 Qt6：本机运行还需对应 MinGW Qt / 运行时 DLL（或自行 `windeployqt`）；纯 exe 不一定能在未装 Qt 的 Windows 上直接启动。
 
 ## License
 

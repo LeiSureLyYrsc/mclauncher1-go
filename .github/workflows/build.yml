@@ -66,3 +66,64 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Windows (Qt6 / miqt MinGW)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Go version pinned by go.mod (MSVC is incompatible with CGO; MinGW via MSYS2).
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # miqt documents MSYS2 UCRT64 + GCC for native Windows Qt6 builds.
+      - name: Setup MSYS2 (UCRT64 MinGW + Qt6 QML)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+
+      - name: Build
+        shell: msys2 {0}
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          export PATH="/ucrt64/bin:${PATH}"
+          echo "go=$(command -v go)"
+          go version
+          echo "gcc=$(command -v gcc)"
+          gcc --version | head -1
+          pkg-config --modversion Qt6Core
+          pkg-config --modversion Qt6Qml || pkg-config --modversion Qt6Declarative || true
+          go build -ldflags "-s -w" -o mclauncher.exe ./cmd/mclauncher
+          ls -la mclauncher.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mclauncher-windows-amd64
+          path: mclauncher.exe
+          if-no-files-found: error
+
+      - name: Attach binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mclauncher.exe
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
