@@ -46,7 +46,7 @@ QT_QPA_PLATFORM=offscreen go build -o mclauncher ./cmd/mclauncher
 ```
 cmd/mclauncher/     入口
 internal/ui/        主窗口 + 设置对话框（widgets + QSS）
-assets/             bg_main.jpg（go:embed）
+assets/             背景图（data.go base64，构建时解码）
 ```
 
 ## 路线图
