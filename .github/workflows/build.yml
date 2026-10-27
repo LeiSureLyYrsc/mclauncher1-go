@@ -87,6 +87,7 @@ jobs:
       # miqt documents MSYS2 UCRT64 + GCC for native Windows Qt6 builds.
       # path-type: inherit so actions/setup-go's Windows Go is visible in msys2 {0}
       # (default "minimal" only keeps cmd/powershell and causes "go: command not found").
+      # qt6-tools provides windeployqt for packaging Qt/MinGW DLLs next to the exe.
       - name: Setup MSYS2 (UCRT64 MinGW + Qt6 QML)
         uses: msys2/setup-msys2@v2
         with:
@@ -98,6 +99,8 @@ jobs:
             mingw-w64-ucrt-x86_64-pkg-config
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-tools
+            zip
 
       - name: Build
         shell: msys2 {0}
@@ -123,18 +126,88 @@ jobs:
           go build -ldflags "-s -w" -o mclauncher.exe ./cmd/mclauncher
           ls -la mclauncher.exe
 
+      # Bare exe needs MinGW runtime + Qt6 DLLs on PATH / next to the binary.
+      # Package a self-contained zip so CI artifacts run without a full MSYS2 install.
+      - name: Package Windows runtime (windeployqt + MinGW DLLs)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          export PATH="/ucrt64/bin:${PATH}"
+          DEST=dist/mclauncher-windows-amd64
+          rm -rf dist
+          mkdir -p "$DEST"
+          cp -f mclauncher.exe "$DEST/"
+
+          WDQ=""
+          for cand in windeployqt-qt6 windeployqt6 windeployqt; do
+            if command -v "$cand" >/dev/null 2>&1; then
+              WDQ="$cand"
+              break
+            fi
+          done
+
+          if [ -n "$WDQ" ]; then
+            echo "Using $WDQ"
+            # --qmldir so QML modules/plugins ship with the app
+            "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe" \
+              || "$WDQ" --qmldir qml "$DEST/mclauncher.exe"
+          else
+            echo "windeployqt not found; copying common Qt6 DLLs from /ucrt64/bin"
+            shopt -s nullglob
+            for pattern in \
+              Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll \
+              Qt6Qml.dll Qt6QmlModels.dll Qt6QmlWorkerScript.dll Qt6QmlMeta.dll \
+              Qt6Quick.dll Qt6QuickControls2.dll Qt6QuickControls2Impl.dll \
+              Qt6QuickLayouts.dll Qt6QuickTemplates2.dll \
+              Qt6QuickDialogs2.dll Qt6QuickDialogs2QuickImpl.dll Qt6QuickDialogs2Utils.dll \
+              Qt6OpenGL.dll Qt6Svg.dll Qt6SvgWidgets.dll \
+              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
+              libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll \
+              libdouble-conversion.dll libfreetype-6.dll libglib-2.0-0.dll \
+              libgraphite2.dll libharfbuzz-0.dll libiconv-2.dll \
+              libicudt*.dll libicuin*.dll libicuuc*.dll \
+              libintl-8.dll libmd4c.dll libpcre2-16-0.dll libpcre2-8-0.dll \
+              libpng16-16.dll libzstd.dll zlib1.dll \
+              libssl-3-x64.dll libcrypto-3-x64.dll; do
+              for f in /ucrt64/bin/$pattern; do
+                [ -f "$f" ] && cp -f "$f" "$DEST/"
+              done
+            done
+            # Qt plugins commonly required at runtime
+            for plugindir in platforms styles imageformats tls networkinformation iconengines; do
+              if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
+                mkdir -p "$DEST/$plugindir"
+                cp -f /ucrt64/share/qt6/plugins/$plugindir/*.dll "$DEST/$plugindir/" 2>/dev/null || true
+              fi
+            done
+          fi
+
+          # Always ship MinGW runtime next to the exe (fixes missing libgcc_s_seh-1.dll).
+          for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
+            if [ ! -f "/ucrt64/bin/$dll" ]; then
+              echo "ERROR: missing /ucrt64/bin/$dll" >&2
+              exit 1
+            fi
+            cp -f "/ucrt64/bin/$dll" "$DEST/"
+          done
+
+          echo "Packaged contents:"
+          find "$DEST" -type f | sort | head -n 200
+          (cd dist && zip -r mclauncher-windows-amd64.zip mclauncher-windows-amd64)
+          ls -la dist/mclauncher-windows-amd64.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mclauncher-windows-amd64
-          path: mclauncher.exe
+          path: dist/mclauncher-windows-amd64.zip
           if-no-files-found: error
 
       - name: Attach binary to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: mclauncher.exe
+          files: dist/mclauncher-windows-amd64.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
