@@ -1,0 +1,31 @@
+# Binaries
+/mclauncher
+/mclauncher1
+*.exe
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Go
+*.test
+*.out
+vendor/
+.gocache/
+.tmp/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local screenshots / build artifacts
+_ref_screenshots/
+*.log
+
+# local build artifact
+mclauncher
+mclauncher.exe
