@@ -172,6 +172,9 @@ jobs:
           # Windows PCs fail to start (missing DLL, often invisible under SFX).
           copy_mingw_qt_deps() {
             echo "Copying MinGW/Qt dependency DLLs from /ucrt64/bin"
+            # Save/restore nullglob: leaving it on makes require_glob "$DEST"/libicu*.dll
+            # expand to zero args under set -u → "$1: unbound variable".
+            _nullglob_was=$(shopt -p nullglob || true)
             shopt -s nullglob
             for pattern in \
               Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6OpenGL.dll \
@@ -198,11 +201,14 @@ jobs:
                 fi
               done
             done
+            eval "$_nullglob_was" 2>/dev/null || shopt -u nullglob
+            unset _nullglob_was
             return 0
           }
 
           copy_qt_plugins_fallback() {
             echo "Copying common Qt6 plugins/qml from /ucrt64 (fallback)"
+            _nullglob_was=$(shopt -p nullglob || true)
             shopt -s nullglob
             for plugindir in platforms styles imageformats tls networkinformation iconengines generic; do
               if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
@@ -216,6 +222,8 @@ jobs:
               cp -a /ucrt64/share/qt6/qml/QtQuick "$DEST/qml/" 2>/dev/null || true
               cp -a /ucrt64/share/qt6/qml/QML "$DEST/qml/" 2>/dev/null || true
             fi
+            eval "$_nullglob_was" 2>/dev/null || shopt -u nullglob
+            unset _nullglob_was
             return 0
           }
 
@@ -260,16 +268,29 @@ jobs:
           fi
 
           require_file() {
-            if [ ! -f "$1" ]; then
-              echo "ERROR: missing required file: $1" >&2
-              ls -la "$(dirname "$1")" >&2 || true
+            # ${1-} so set -u never trips on a missing/empty arg.
+            f="${1-}"
+            if [ -z "$f" ] || [ ! -f "$f" ]; then
+              echo "ERROR: missing required file: ${f:-<empty>}" >&2
+              if [ -n "$f" ]; then
+                ls -la "$(dirname "$f")" >&2 || true
+              else
+                ls -la "$DEST" >&2 || true
+              fi
               exit 1
             fi
           }
           require_glob() {
-            # shellcheck disable=SC2086
-            if ! ls $1 >/dev/null 2>&1; then
-              echo "ERROR: no files matching $1" >&2
+            # Pass patterns fully quoted (e.g. "$DEST/libicuuc*.dll"). Expanding at
+            # the call site with nullglob on yields zero args → unbound $1 under set -u.
+            pattern="${1-}"
+            if [ -z "$pattern" ]; then
+              echo "ERROR: require_glob called with empty pattern" >&2
+              ls -la "$DEST" >&2 || true
+              exit 1
+            fi
+            if ! compgen -G "$pattern" >/dev/null; then
+              echo "ERROR: no files matching $pattern" >&2
               ls -la "$DEST" >&2 || true
               exit 1
             fi
@@ -290,9 +311,10 @@ jobs:
           require_file "$DEST/libmd4c.dll"
           require_file "$DEST/libpng16-16.dll"
           # ICU major version varies; require at least one of each family.
-          require_glob "$DEST"/libicuuc*.dll
-          require_glob "$DEST"/libicuin*.dll
-          require_glob "$DEST"/libicudt*.dll
+          # Quote the whole pattern so nullglob cannot strip the function argument.
+          require_glob "$DEST/libicuuc*.dll"
+          require_glob "$DEST/libicuin*.dll"
+          require_glob "$DEST/libicudt*.dll"
 
           # No pipes: avoid SIGPIPE under any shell options.
           find "$DEST" -type f > /tmp/pkg-list.txt
