@@ -210,98 +210,10 @@ jobs:
             echo "windeployqt ok (log: /tmp/windeployqt.log)"
           fi
 
-          # ALWAYS copy MinGW/Qt transitive deps. windeployqt does not ship ICU/zlib/pcre/etc.
-          # Run in a subshell so `shopt -s nullglob` cannot leak (leaking + set -u made
-          # require_glob "$DEST"/libicu*.dll expand to zero args → "$1: unbound variable").
-          echo "Copying MinGW/Qt dependency DLLs from /ucrt64/bin"
-          (
-            shopt -s nullglob
-            for pattern in \
-              Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6OpenGL.dll \
-              Qt6Qml.dll Qt6QmlModels.dll Qt6QmlWorkerScript.dll Qt6QmlMeta.dll \
-              Qt6Quick.dll Qt6QuickControls2.dll Qt6QuickControls2Impl.dll \
-              Qt6QuickLayouts.dll Qt6QuickTemplates2.dll \
-              Qt6QuickDialogs2.dll Qt6QuickDialogs2QuickImpl.dll Qt6QuickDialogs2Utils.dll \
-              Qt6Svg.dll Qt6SvgWidgets.dll \
-              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
-              libb2-1.dll libbrotlicommon.dll libbrotlicommon-1.dll \
-              libbrotlidec.dll libbrotlidec-1.dll libbz2-1.dll \
-              libdouble-conversion.dll libfreetype-6.dll libglib-2.0-0.dll \
-              libgraphite2.dll libgraphite2-3.dll libharfbuzz-0.dll libiconv-2.dll \
-              libicudt*.dll libicuin*.dll libicuuc*.dll \
-              libintl-8.dll libmd4c.dll libpcre2-16-0.dll libpcre2-8-0.dll \
-              libpng16-16.dll libzstd.dll zlib1.dll \
-              libssl-3-x64.dll libcrypto-3-x64.dll \
-              libEGL.dll libGLESv2.dll opengl32sw.dll D3Dcompiler_47.dll
-            do
-              for f in /ucrt64/bin/$pattern; do
-                if [ -f "$f" ]; then
-                  cp -f "$f" "$DEST/"
-                fi
-              done
-            done
-          )
-
-          # Recursively copy PE imports still missing from /ucrt64/bin (name variants).
-          # Kept in packaging/scripts/copy_pe_deps.py so YAML never sees unindented Python.
-          python3 packaging/scripts/copy_pe_deps.py "$DEST" --from /ucrt64/bin
-
-
-          if [ ! -f "$DEST/qt.conf" ]; then
-            printf '%s\n' '[Paths]' 'Prefix=.' 'Plugins=.' 'QmlImports=qml' 'Libraries=.' > "$DEST/qt.conf"
-          fi
-
-          miss=0
-          check() {
-            local path="$1"
-            if [ ! -f "$path" ]; then
-              echo "ERROR: missing required file: $path" >&2
-              miss=1
-            fi
-          }
-          check_glob() {
-            local pattern="$1"
-            shopt -u nullglob
-            if [ -z "$pattern" ] || ! compgen -G "$pattern" >/dev/null; then
-              echo "ERROR: no files matching ${pattern:-<empty>}" >&2
-              miss=1
-            fi
-          }
-          check "$DEST/mclauncher.exe"
-          check "$DEST/libgcc_s_seh-1.dll"
-          check "$DEST/libstdc++-6.dll"
-          check "$DEST/libwinpthread-1.dll"
-          check "$DEST/platforms/qwindows.dll"
-          check "$DEST/libpcre2-16-0.dll"
-          check "$DEST/zlib1.dll"
-          check "$DEST/libzstd.dll"
-          check "$DEST/libdouble-conversion.dll"
-          check "$DEST/libb2-1.dll"
-          check "$DEST/libfreetype-6.dll"
-          check "$DEST/libharfbuzz-0.dll"
-          check "$DEST/libmd4c.dll"
-          check "$DEST/libpng16-16.dll"
-          # ICU: required when present in the toolchain or imported by Qt6Core.
-          need_icu=0
-          if compgen -G /ucrt64/bin/libicuuc*.dll >/dev/null; then
-            need_icu=1
-          elif command -v objdump >/dev/null 2>&1 && objdump -p "$DEST/Qt6Core.dll" 2>/dev/null | grep -qi 'DLL Name:.*icu'; then
-            need_icu=1
-          fi
-          if [ "$need_icu" -eq 1 ]; then
-            check_glob "$DEST/libicuuc*.dll"
-            check_glob "$DEST/libicuin*.dll"
-            check_glob "$DEST/libicudt*.dll"
-          else
-            echo "NOTE: toolchain Qt appears built without ICU; skipping libicu* asserts"
-          fi
-          if [ "$miss" -ne 0 ]; then
-            echo "---- /ucrt64/bin ICU / key libs (debug) ----" >&2
-            ls -la /ucrt64/bin/libicu*.dll /ucrt64/bin/libb2*.dll /ucrt64/bin/libdouble*.dll /ucrt64/bin/libpcre2*.dll /ucrt64/bin/zlib1.dll /ucrt64/bin/libzstd.dll 2>&1 >&2 || true
-            echo "---- $DEST top dlls ----" >&2
-            ls -la "$DEST"/*.dll 2>&1 | head -80 >&2 || true
-            exit 1
-          fi
+          # ALWAYS copy MinGW/Qt transitive deps via helper script.
+          # (Inline multiline python previously broke workflow YAML — unindented lines.)
+          # Explicit icu package above; windeployqt never ships ICU/zlib/pcre/etc.
+          python3 packaging/scripts/copy-mingw-qt-deps.py "$DEST"
 
           find "$DEST" -type f > /tmp/pkg-list.txt
           sort -o /tmp/pkg-list.txt /tmp/pkg-list.txt
@@ -309,7 +221,7 @@ jobs:
           echo "Key artifacts:"
           ls -la "$DEST/mclauncher.exe" "$DEST/libgcc_s_seh-1.dll" "$DEST/libstdc++-6.dll" "$DEST/libwinpthread-1.dll"
           ls -la "$DEST/platforms/qwindows.dll" "$DEST/libpcre2-16-0.dll" "$DEST/zlib1.dll" "$DEST/qt.conf"
-          ls -la "$DEST"/libicu*.dll 2>/dev/null || echo "(no libicu*.dll; OK if Qt built without ICU)"
+          ls -la "$DEST"/libicu*.dll "$DEST"/icu*.dll 2>/dev/null || true
           ls -la "$DEST/qml" 2>/dev/null || echo "(no qml/ yet)"
 
           if ! command -v zip >/dev/null 2>&1; then
