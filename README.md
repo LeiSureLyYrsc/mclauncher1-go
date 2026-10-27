@@ -1,5 +1,8 @@
 # mclauncher1-go
 
+[![Build](https://github.com/LeiSureLyYrsc/mclauncher1-go/actions/workflows/build.yml/badge.svg)](https://github.com/LeiSureLyYrsc/mclauncher1-go/actions/workflows/build.yml)
+
+
 忘却的旋律 **MCLauncher 5.31** 主界面的 Go + **Qt6 QML** 复刻，并实现核心启动能力。
 
 ## 功能
@@ -67,6 +70,23 @@ assets/                   背景图
 2. 点击「更新游戏」下载该版本（客户端、库、资源）
 3. 未配置 Authlib 时直接「启动游戏」即为离线模式
 4. 设置中可切换 Authlib、填写 API 地址并「登录测试」（密码仅用于当次认证，不写入 config.json）；下次启动若令牌有效则刷新使用，刷新失败需重新登录；可「嗅探」Java
+
+
+## CI / 自动构建
+
+GitHub Actions（[`.github/workflows/build.yml`](.github/workflows/build.yml)）在以下事件自动构建：
+
+- **push**：`main` 及任意分支
+- **pull_request**
+- **tags**：`v*`（例如 `v0.1.0`）
+
+在 `ubuntu-latest` 上安装 Qt6 + miqt QML 依赖，按 `go.mod` 安装 Go，执行：
+
+```bash
+go build -ldflags '-s -w' -o mclauncher ./cmd/mclauncher
+```
+
+产物上传为 Artifact（`mclauncher-linux-amd64`）。打 `v*` 标签时会将 Linux 二进制挂到对应 Release。Windows 交叉编译需 Qt 工具链，暂未纳入 CI。
 
 ## License
 
