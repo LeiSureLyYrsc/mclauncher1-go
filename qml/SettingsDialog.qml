@@ -13,7 +13,7 @@ Dialog {
     standardButtons: Dialog.NoButton
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    property var L: typeof launcher !== "undefined" ? launcher : null
+    property var bridge: typeof launcher !== "undefined" ? launcher : null
 
     background: Rectangle {
         color: "#f0f0f0"
@@ -21,22 +21,22 @@ Dialog {
     }
 
     onAboutToShow: {
-        if (!L) return
-        if (L.authMode === "authlib")
+        if (!bridge) return
+        if (bridge.authMode === "authlib")
             modeAuthlib.checked = true
         else
             modeOffline.checked = true
-        offlineName.text = L.offlineName || "Player"
-        authlibAPI.text = L.authlibAPI || ""
-        authlibUser.text = L.authlibUser || ""
+        offlineName.text = bridge.offlineName || "Player"
+        authlibAPI.text = bridge.authlibAPI || ""
+        authlibUser.text = bridge.authlibUser || ""
         // Password is ephemeral — never reload from config (scheme 1).
         authlibPass.text = ""
-        javaPath.text = L.javaPath || ""
-        mem.value = L.maxMemoryMB > 0 ? L.maxMemoryMB : 2048
-        debug.checked = (L.debug === true || L.debug === "true" || L.debug === "1")
-        if (L.versionFilter === "all")
+        javaPath.text = bridge.javaPath || ""
+        mem.value = bridge.maxMemoryMB > 0 ? bridge.maxMemoryMB : 2048
+        debug.checked = (bridge.debug === true || bridge.debug === "true" || bridge.debug === "1")
+        if (bridge.versionFilter === "all")
             filterAll.checked = true
-        else if (L.versionFilter === "snapshot")
+        else if (bridge.versionFilter === "snapshot")
             filterSnap.checked = true
         else
             filterRelease.checked = true
@@ -107,7 +107,7 @@ Dialog {
                         font.pixelSize: 11
                         color: "#555"
                         text: {
-                            var pn = L && L.profileName ? L.profileName : ""
+                            var pn = bridge && bridge.profileName ? bridge.profileName : ""
                             if (pn)
                                 return "已登录角色：" + pn + "（仅保存令牌，不保存密码）"
                             return "外置登录只保存 access/client 令牌与角色信息，不保存密码。"
@@ -118,7 +118,7 @@ Dialog {
                             text: "登录测试"
                             onClicked: {
                                 pushToLauncher()
-                                if (L) L.cmd = "testLogin"
+                                if (bridge) bridge.cmd = "testLogin"
                                 // Keep field empty after submit so reopen/clear never shows a saved password.
                                 authlibPass.text = ""
                             }
@@ -126,7 +126,7 @@ Dialog {
                         Button {
                             text: "清除登录"
                             onClicked: {
-                                if (L) L.cmd = "clearAuth"
+                                if (bridge) bridge.cmd = "clearAuth"
                                 authlibUser.text = ""
                                 authlibPass.text = ""
                                 modeOffline.checked = true
@@ -154,9 +154,9 @@ Dialog {
                     Button {
                         text: "嗅探"
                         onClicked: {
-                            if (L) L.cmd = "sniffJava"
+                            if (bridge) bridge.cmd = "sniffJava"
                             Qt.callLater(function() {
-                                if (L) javaPath.text = L.javaPath || javaPath.text
+                                if (bridge) javaPath.text = bridge.javaPath || javaPath.text
                             })
                         }
                     }
@@ -200,7 +200,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: L ? ("状态：" + (L.status || "")) : ""
+            text: bridge ? ("状态：" + (bridge.status || "")) : ""
             color: "#444"
             font.pixelSize: 11
         }
@@ -213,7 +213,7 @@ Dialog {
                 text: "保存设置"
                 onClicked: {
                     pushToLauncher()
-                    if (L) L.cmd = "saveSettings"
+                    if (bridge) bridge.cmd = "saveSettings"
                     root.accept()
                 }
             }
@@ -225,20 +225,20 @@ Dialog {
     }
 
     function pushToLauncher() {
-        if (!L) return
-        L.authMode = modeAuthlib.checked ? "authlib" : "offline"
-        L.offlineName = offlineName.text || "Player"
-        L.authlibAPI = authlibAPI.text
-        L.authlibUser = authlibUser.text
+        if (!bridge) return
+        bridge.authMode = modeAuthlib.checked ? "authlib" : "offline"
+        bridge.offlineName = offlineName.text || "Player"
+        bridge.authlibAPI = authlibAPI.text
+        bridge.authlibUser = authlibUser.text
         // Ephemeral: password only for authenticate; never persisted to config.json.
-        L.authlibPass = authlibPass.text
-        L.javaPath = javaPath.text
-        L.maxMemoryMB = mem.value
-        L.debug = debug.checked
+        bridge.authlibPass = authlibPass.text
+        bridge.javaPath = javaPath.text
+        bridge.maxMemoryMB = mem.value
+        bridge.debug = debug.checked
         var f = "release"
         if (filterSnap.checked) f = "snapshot"
         if (filterAll.checked) f = "all"
-        L.versionFilter = f
+        bridge.versionFilter = f
     }
 
     FileDialog {
