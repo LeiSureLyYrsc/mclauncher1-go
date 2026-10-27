@@ -128,6 +128,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-icu
             zip
             python
 
@@ -242,42 +243,9 @@ jobs:
           )
 
           # Recursively copy PE imports still missing from /ucrt64/bin (name variants).
-          python3 -c '
-import re, subprocess, sys
-from pathlib import Path
-dest, ucrt = Path(sys.argv[1]), Path("/ucrt64/bin")
-dll_re = re.compile(r"DLL Name:\s+(\S+\.dll)", re.I)
-sys_dll = {x.lower() for x in [
-  "kernel32.dll","user32.dll","gdi32.dll","shell32.dll","advapi32.dll","ole32.dll",
-  "oleaut32.dll","ws2_32.dll","winmm.dll","imm32.dll","version.dll","dwmapi.dll",
-  "uxtheme.dll","ntdll.dll","opengl32.dll","d3d11.dll","dxgi.dll","dwrite.dll",
-  "comdlg32.dll","comctl32.dll","netapi32.dll","userenv.dll","crypt32.dll","bcrypt.dll",
-  "secur32.dll","iphlpapi.dll","mpr.dll","dnsapi.dll","authz.dll","shlwapi.dll",
-  "shcore.dll","msvcrt.dll","ucrtbase.dll","nsi.dll","win32u.dll","rpcrt4.dll",
-  "sechost.dll","combase.dll","setupapi.dll","wtsapi32.dll","d3d12.dll","dbghelp.dll",
-]}
-def imports(pe):
-  try:
-    out = subprocess.check_output(["objdump","-p",str(pe)], stderr=subprocess.DEVNULL, text=True, errors="replace")
-  except Exception:
-    return []
-  return [m.group(1) for m in dll_re.finditer(out)]
-ucrt_index = {p.name.lower(): p for p in ucrt.glob("*.dll")}
-changed, rounds = True, 0
-while changed and rounds < 20:
-  changed = False
-  rounds += 1
-  for pe in list(dest.rglob("*.dll")) + list(dest.rglob("*.exe")):
-    for name in imports(pe):
-      low = name.lower()
-      if low in sys_dll: continue
-      if any((dest/n).exists() for n in (name, name.lower(), Path(name).name)): continue
-      src = ucrt_index.get(low)
-      if src is None: continue
-      print("copy missing dep", src.name)
-      (dest/src.name).write_bytes(src.read_bytes())
-      changed = True
-' "$DEST"
+          # Kept in packaging/scripts/copy_pe_deps.py so YAML never sees unindented Python.
+          python3 packaging/scripts/copy_pe_deps.py "$DEST" --from /ucrt64/bin
+
 
           if [ ! -f "$DEST/qt.conf" ]; then
             printf '%s\n' '[Paths]' 'Prefix=.' 'Plugins=.' 'QmlImports=qml' 'Libraries=.' > "$DEST/qt.conf"
@@ -293,12 +261,9 @@ while changed and rounds < 20:
           }
           check_glob() {
             local pattern="$1"
-            # intentional glob; disable nullglob for this check
             shopt -u nullglob
-            local matches
-            matches=( $pattern )
-            if [ ! -f "${matches[0]:-}" ]; then
-              echo "ERROR: no files matching $pattern" >&2
+            if [ -z "$pattern" ] || ! compgen -G "$pattern" >/dev/null; then
+              echo "ERROR: no files matching ${pattern:-<empty>}" >&2
               miss=1
             fi
           }
@@ -316,9 +281,20 @@ while changed and rounds < 20:
           check "$DEST/libharfbuzz-0.dll"
           check "$DEST/libmd4c.dll"
           check "$DEST/libpng16-16.dll"
-          check_glob "$DEST"/libicuuc*.dll
-          check_glob "$DEST"/libicuin*.dll
-          check_glob "$DEST"/libicudt*.dll
+          # ICU: required when present in the toolchain or imported by Qt6Core.
+          need_icu=0
+          if compgen -G /ucrt64/bin/libicuuc*.dll >/dev/null; then
+            need_icu=1
+          elif command -v objdump >/dev/null 2>&1 && objdump -p "$DEST/Qt6Core.dll" 2>/dev/null | grep -qi 'DLL Name:.*icu'; then
+            need_icu=1
+          fi
+          if [ "$need_icu" -eq 1 ]; then
+            check_glob "$DEST/libicuuc*.dll"
+            check_glob "$DEST/libicuin*.dll"
+            check_glob "$DEST/libicudt*.dll"
+          else
+            echo "NOTE: toolchain Qt appears built without ICU; skipping libicu* asserts"
+          fi
           if [ "$miss" -ne 0 ]; then
             echo "---- /ucrt64/bin ICU / key libs (debug) ----" >&2
             ls -la /ucrt64/bin/libicu*.dll /ucrt64/bin/libb2*.dll /ucrt64/bin/libdouble*.dll /ucrt64/bin/libpcre2*.dll /ucrt64/bin/zlib1.dll /ucrt64/bin/libzstd.dll 2>&1 >&2 || true
@@ -333,7 +309,7 @@ while changed and rounds < 20:
           echo "Key artifacts:"
           ls -la "$DEST/mclauncher.exe" "$DEST/libgcc_s_seh-1.dll" "$DEST/libstdc++-6.dll" "$DEST/libwinpthread-1.dll"
           ls -la "$DEST/platforms/qwindows.dll" "$DEST/libpcre2-16-0.dll" "$DEST/zlib1.dll" "$DEST/qt.conf"
-          ls -la "$DEST"/libicu*.dll
+          ls -la "$DEST"/libicu*.dll 2>/dev/null || echo "(no libicu*.dll; OK if Qt built without ICU)"
           ls -la "$DEST/qml" 2>/dev/null || echo "(no qml/ yet)"
 
           if ! command -v zip >/dev/null 2>&1; then
