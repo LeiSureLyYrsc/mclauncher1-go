@@ -6,8 +6,8 @@
 //
 //  1. Build the app normally and deploy runtime next to it (windeployqt / bundle-linux-qt).
 //  2. Zip that directory and append it to this pure-Go stub with an 8-byte size + magic trailer.
-//  3. On first run, extract to a hashed cache under os.TempDir(), set Qt env vars, and exec
-//     the real binary. Later runs reuse the cache.
+//  3. On first run, extract to a hashed cache, set Qt env vars, and exec the real binary.
+//     Later runs reuse the cache.
 //
 // Layout of the final artifact:
 //
@@ -40,7 +40,7 @@ func main() {
 
 	sum := sha256.Sum256(payload)
 	hash := hex.EncodeToString(sum[:8])
-	cacheRoot := filepath.Join(os.TempDir(), "mclauncher-sfx-"+hash)
+	cacheRoot := filepath.Join(cacheBaseDir(), "mclauncher-sfx-"+hash)
 	readyMarker := filepath.Join(cacheRoot, ".sfx-ready")
 
 	if _, err := os.Stat(readyMarker); err != nil {
@@ -48,6 +48,7 @@ func main() {
 			_ = os.RemoveAll(cacheRoot)
 			fatal("extract runtime: %v", err)
 		}
+		ensureQtConf(cacheRoot)
 		if err := os.WriteFile(readyMarker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 			fatal("mark ready: %v", err)
 		}
@@ -62,14 +63,26 @@ func main() {
 			innerPath = matches[0]
 			cacheRoot = filepath.Dir(innerPath)
 		} else {
-			fatal("inner binary not found: %s", innerPath)
+			fatal("inner binary not found: %s\n(cache=%s)", innerPath, cacheRoot)
 		}
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(innerPath, 0o755)
 	}
 
+	// Preflight: common silent-failure causes on Windows.
+	if runtime.GOOS == "windows" {
+		platformDLL := filepath.Join(cacheRoot, "platforms", "qwindows.dll")
+		if _, err := os.Stat(platformDLL); err != nil {
+			fatal("missing platforms/qwindows.dll beside app\nlooked at: %s\ncache: %s", platformDLL, cacheRoot)
+		}
+	}
+
 	env := os.Environ()
+	// Remember the user's launch CWD for game-dir resolution inside the app.
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		env = setOrReplace(env, "MCLAUNCHER_CWD", cwd)
+	}
 	env = withQtEnv(env, cacheRoot)
 
 	cmd := exec.Command(innerPath, os.Args[1:]...)
@@ -77,15 +90,36 @@ func main() {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	// Preserve caller CWD so the app's game-dir resolution (Getwd) stays correct.
-	cmd.Dir = ""
+	// Run with extract dir as CWD so relative Qt plugin lookups work; the app
+	// should prefer MCLAUNCHER_CWD (or a stable game dir) over Getwd().
+	cmd.Dir = cacheRoot
 
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			os.Exit(ee.ExitCode())
+			code := ee.ExitCode()
+			// DLL-load / NTSTATUS style failures often look like huge unsigned codes.
+			if code != 0 {
+				fatal("child exited with code %d (%s)\ncache: %s\nIf a DLL is missing, re-download the latest artifact.", code, innerPath, cacheRoot)
+			}
+			os.Exit(code)
 		}
-		fatal("run %s: %v", innerPath, err)
+		fatal("failed to start %s: %v\ncache: %s", innerPath, err, cacheRoot)
 	}
+}
+
+func cacheBaseDir() string {
+	// Prefer LocalAppData on Windows — TEMP is often wiped / AV-hostile for unpacked exes.
+	if runtime.GOOS == "windows" {
+		if base := os.Getenv("LOCALAPPDATA"); base != "" {
+			return filepath.Join(base, "mclauncher")
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, ".cache", "mclauncher")
+		}
+	}
+	return os.TempDir()
 }
 
 func innerBinaryName() string {
@@ -96,20 +130,31 @@ func innerBinaryName() string {
 }
 
 func withQtEnv(env []string, root string) []string {
-	plugins := firstExisting(
+	plugins := firstExistingDir(
 		filepath.Join(root, "plugins"),
 		filepath.Join(root, "qt6", "plugins"),
-		root, // windeployqt often places platforms/ next to the exe
+		root, // windeployqt places platforms/ next to the exe
 	)
-	qml := firstExisting(
+	qml := firstExistingDir(
 		filepath.Join(root, "qml"),
 		filepath.Join(root, "qt6", "qml"),
 	)
+	platforms := firstExistingDir(
+		filepath.Join(root, "platforms"),
+		filepath.Join(root, "plugins", "platforms"),
+		filepath.Join(root, "qt6", "plugins", "platforms"),
+	)
 
-	env = setOrPrepend(env, "QT_PLUGIN_PATH", plugins)
+	if plugins != "" {
+		env = setOrReplace(env, "QT_PLUGIN_PATH", plugins)
+	}
+	if platforms != "" {
+		// Most important for "could not find platform plugin windows".
+		env = setOrReplace(env, "QT_QPA_PLATFORM_PLUGIN_PATH", platforms)
+	}
 	if qml != "" {
-		env = setOrPrepend(env, "QML2_IMPORT_PATH", qml)
-		env = setOrPrepend(env, "QML_IMPORT_PATH", qml)
+		env = setOrReplace(env, "QML2_IMPORT_PATH", qml)
+		env = setOrReplace(env, "QML_IMPORT_PATH", qml)
 	}
 
 	switch runtime.GOOS {
@@ -117,7 +162,6 @@ func withQtEnv(env []string, root string) []string {
 		env = setOrPrepend(env, "PATH", root)
 	default:
 		env = setOrPrepend(env, "LD_LIBRARY_PATH", root)
-		// Some distro layouts put libs under lib/
 		libDir := filepath.Join(root, "lib")
 		if st, err := os.Stat(libDir); err == nil && st.IsDir() {
 			env = setOrPrepend(env, "LD_LIBRARY_PATH", libDir)
@@ -126,16 +170,37 @@ func withQtEnv(env []string, root string) []string {
 	return env
 }
 
-func firstExisting(candidates ...string) string {
+func ensureQtConf(root string) {
+	path := filepath.Join(root, "qt.conf")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	// windeployqt layout: platforms/ and qml/ sit next to the exe.
+	content := "[Paths]\nPrefix=.\nPlugins=.\nQmlImports=qml\nLibraries=.\n"
+	_ = os.WriteFile(path, []byte(content), 0o644)
+}
+
+func firstExistingDir(candidates ...string) string {
 	for _, c := range candidates {
 		if st, err := os.Stat(c); err == nil && st.IsDir() {
 			return c
 		}
 	}
-	if len(candidates) > 0 {
-		return candidates[0]
-	}
 	return ""
+}
+
+func setOrReplace(env []string, key, value string) []string {
+	if value == "" {
+		return env
+	}
+	prefix := key + "="
+	for i, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 func setOrPrepend(env []string, key, value string) []string {
@@ -164,9 +229,9 @@ func readTrailingZip() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	self, err = filepath.EvalSymlinks(self)
-	if err != nil {
-		return nil, err
+	// EvalSymlinks can fail on some Windows paths; fall back to raw path.
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
 	}
 	f, err := os.Open(self)
 	if err != nil {
@@ -199,7 +264,6 @@ func readTrailingZip() ([]byte, error) {
 	if _, err := f.ReadAt(buf, start); err != nil {
 		return nil, err
 	}
-	// Sanity: must look like a zip.
 	if len(buf) < 4 || buf[0] != 'P' || buf[1] != 'K' {
 		return nil, fmt.Errorf("payload is not a zip archive")
 	}
@@ -225,7 +289,6 @@ func extractZip(payload []byte, dest string) error {
 
 	_ = os.RemoveAll(dest)
 	if err := os.Rename(tmp, dest); err != nil {
-		// Cross-device fallback.
 		if err2 := copyDir(tmp, dest); err2 != nil {
 			return err
 		}
@@ -301,6 +364,34 @@ func copyDir(src, dst string) error {
 }
 
 func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "mclauncher-sfx: "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	line := "mclauncher-sfx: " + msg + "\n"
+	fmt.Fprint(os.Stderr, line)
+	writeFailureLog(msg)
+	showErrorDialog(msg)
 	os.Exit(1)
+}
+
+func writeFailureLog(msg string) {
+	stamp := time.Now().Format("2006-01-02 15:04:05")
+	body := fmt.Sprintf("[%s] %s\n", stamp, msg)
+	candidates := []string{}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "mclauncher-sfx-error.log"))
+	}
+	candidates = append(candidates, filepath.Join(os.TempDir(), "mclauncher-sfx-error.log"))
+	if runtime.GOOS == "windows" {
+		if base := os.Getenv("LOCALAPPDATA"); base != "" {
+			candidates = append(candidates, filepath.Join(base, "mclauncher", "mclauncher-sfx-error.log"))
+		}
+	}
+	for _, path := range candidates {
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			continue
+		}
+		_, _ = f.WriteString(body)
+		_ = f.Close()
+	}
 }
