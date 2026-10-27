@@ -2,11 +2,16 @@
 """Copy MinGW/Qt transitive DLLs next to a Windows deploy tree.
 
 windeployqt ships Qt6*.dll + plugins but not ICU/zlib/pcre/freetype/etc.
-Also recursively pulls PE imports from /ucrt64/bin.
+Also recursively pulls PE imports from the UCRT64 MinGW bin dir.
+
+On GitHub Actions (MSYS2 UCRT64), `python3` is often a native Windows
+build: Path("/ucrt64/bin") is not visible to it even though bash sees it.
+Resolve the real bin dir via --ucrt, MSYSTEM_PREFIX, gcc on PATH, or cygpath.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -79,6 +84,73 @@ def imports(pe: Path) -> list[str]:
     return [m.group(1) for m in DLL_RE.finditer(out)]
 
 
+def _cygpath_m(unix_path: str) -> Path | None:
+    cygpath = shutil.which("cygpath")
+    if not cygpath:
+        return None
+    try:
+        out = subprocess.check_output(
+            [cygpath, "-m", unix_path],
+            text=True,
+            errors="replace",
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+    if not out:
+        return None
+    p = Path(out)
+    return p if p.is_dir() else None
+
+
+def resolve_ucrt(explicit: Path | None) -> Path | None:
+    """Find MinGW UCRT64 bin so native Windows Python can read it."""
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(explicit)
+
+    msys_prefix = os.environ.get("MSYSTEM_PREFIX") or os.environ.get("MINGW_PREFIX")
+    if msys_prefix:
+        candidates.append(Path(msys_prefix) / "bin")
+
+    for tool in ("gcc", "objdump", "windeployqt6", "windeployqt-qt6"):
+        which = shutil.which(tool)
+        if which:
+            candidates.append(Path(which).resolve().parent)
+
+    candidates.append(Path("/ucrt64/bin"))
+    # Common setup-msys2 / local MSYS2 layouts (Windows drive letters).
+    for root in (
+        os.environ.get("RUNNER_TEMP"),
+        r"D:\a\_temp",
+        r"C:\msys64",
+        "/d/a/_temp/msys64",
+        "/c/msys64",
+    ):
+        if not root:
+            continue
+        candidates.append(Path(root) / "msys64" / "ucrt64" / "bin")
+        candidates.append(Path(root) / "ucrt64" / "bin")
+
+    seen: set[str] = set()
+    for cand in candidates:
+        key = str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if cand.is_dir():
+                return cand
+        except OSError:
+            pass
+
+    # Last resort: translate POSIX /ucrt64/bin for native Windows Python.
+    translated = _cygpath_m("/ucrt64/bin")
+    if translated is not None:
+        return translated
+    return None
+
+
 def copy_patterns(ucrt: Path, dest: Path) -> int:
     n = 0
     for pattern in PATTERNS:
@@ -128,15 +200,28 @@ def needs_icu(dest: Path) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("dest", type=Path, help="deploy directory")
-    ap.add_argument("--ucrt", type=Path, default=Path("/ucrt64/bin"))
+    ap.add_argument(
+        "--ucrt",
+        type=Path,
+        default=None,
+        help="MinGW UCRT64 bin dir (default: auto-detect; /ucrt64/bin on MSYS)",
+    )
     args = ap.parse_args()
     dest: Path = args.dest
-    ucrt: Path = args.ucrt
     if not dest.is_dir():
         print(f"ERROR: dest not a directory: {dest}", file=sys.stderr)
         return 1
-    if not ucrt.is_dir():
-        print(f"ERROR: ucrt bin not found: {ucrt}", file=sys.stderr)
+
+    ucrt = resolve_ucrt(args.ucrt)
+    if ucrt is None:
+        print(
+            "ERROR: ucrt bin not found (tried --ucrt, MSYSTEM_PREFIX, gcc PATH, "
+            "/ucrt64/bin, cygpath)",
+            file=sys.stderr,
+        )
+        print(f"  PATH={os.environ.get('PATH', '')}", file=sys.stderr)
+        print(f"  MSYSTEM_PREFIX={os.environ.get('MSYSTEM_PREFIX', '')}", file=sys.stderr)
+        print(f"  gcc={shutil.which('gcc')}", file=sys.stderr)
         return 1
 
     print(f"Copying MinGW/Qt dependency DLLs from {ucrt}")

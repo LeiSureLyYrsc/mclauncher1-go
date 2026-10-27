@@ -213,7 +213,10 @@ jobs:
           # ALWAYS copy MinGW/Qt transitive deps via helper script.
           # (Inline multiline python previously broke workflow YAML — unindented lines.)
           # Explicit icu package above; windeployqt never ships ICU/zlib/pcre/etc.
-          python3 packaging/scripts/copy-mingw-qt-deps.py "$DEST"
+          # Native Windows python3 cannot see MSYS /ucrt64/bin; pass a mixed path.
+          UCRT_BIN="$(cygpath -m /ucrt64/bin)"
+          echo "UCRT_BIN=$UCRT_BIN python3=$(command -v python3)"
+          python3 packaging/scripts/copy-mingw-qt-deps.py --ucrt "$UCRT_BIN" "$DEST"
 
           find "$DEST" -type f > /tmp/pkg-list.txt
           sort -o /tmp/pkg-list.txt /tmp/pkg-list.txt
