@@ -85,10 +85,13 @@ jobs:
           cache: true
 
       # miqt documents MSYS2 UCRT64 + GCC for native Windows Qt6 builds.
+      # path-type: inherit so actions/setup-go's Windows Go is visible in msys2 {0}
+      # (default "minimal" only keeps cmd/powershell and causes "go: command not found").
       - name: Setup MSYS2 (UCRT64 MinGW + Qt6 QML)
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
+          path-type: inherit
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc
@@ -102,7 +105,15 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           set -euo pipefail
+          # Prefer UCRT64 toolchain (gcc/pkg-config) over any Windows MSVC tools.
           export PATH="/ucrt64/bin:${PATH}"
+          # Belt-and-suspenders: if inherit missed Go, map GOROOT into MSYS paths.
+          if ! command -v go >/dev/null 2>&1; then
+            if [ -n "${GOROOT:-}" ]; then
+              export PATH="$(cygpath -u "${GOROOT}")/bin:${PATH}"
+            fi
+          fi
+          export CC=gcc CXX=g++
           echo "go=$(command -v go)"
           go version
           echo "gcc=$(command -v gcc)"
