@@ -157,7 +157,9 @@ func (b *bridge) applyConfigToProps() {
 	b.set("offlineName", b.cfg.OfflineName)
 	b.set("authlibAPI", b.cfg.AuthlibAPI)
 	b.set("authlibUser", b.cfg.AuthlibUser)
-	b.set("authlibPass", b.cfg.AuthlibPass)
+	// Password is ephemeral: never load from config (scheme 1 — tokens only).
+	b.set("authlibPass", "")
+	b.set("profileName", b.cfg.ProfileName)
 	b.set("javaPath", b.cfg.JavaPath)
 	b.setInt("maxMemoryMB", b.cfg.MaxMemoryMB)
 	b.set("selectedVersion", b.cfg.SelectedVer)
@@ -237,11 +239,13 @@ func (b *bridge) handleCmd(cmd string) {
 	case "clearAuth":
 		b.set("authlibUser", "")
 		b.set("authlibPass", "")
+		b.set("profileName", "")
 		b.set("authMode", auth.ModeOffline)
 		b.mu.Lock()
 		b.cfg.AuthlibUser = ""
-		b.cfg.AuthlibPass = ""
 		b.cfg.AccessToken = ""
+		b.cfg.ClientToken = ""
+		b.cfg.RefreshToken = ""
 		b.cfg.ProfileName = ""
 		b.cfg.ProfileUUID = ""
 		b.cfg.AuthMode = auth.ModeOffline
@@ -265,7 +269,7 @@ func (b *bridge) saveSettingsFromProps() {
 	}
 	b.cfg.AuthlibAPI = strings.TrimSpace(b.get("authlibAPI"))
 	b.cfg.AuthlibUser = b.get("authlibUser")
-	b.cfg.AuthlibPass = b.get("authlibPass")
+	// Never persist password — authlibPass prop is ephemeral for authenticate only.
 	b.cfg.JavaPath = b.get("javaPath")
 	if v := b.props.Value("maxMemoryMB").ToInt(); v > 0 {
 		b.cfg.MaxMemoryMB = v
@@ -370,6 +374,8 @@ func (b *bridge) cmdTestLogin() {
 	ct := b.cfg.ClientToken
 	b.mu.Unlock()
 	sess, err := cli.Login(context.Background(), user, pass, ct)
+	// Drop password from memory/props immediately after the authenticate call.
+	b.set("authlibPass", "")
 	if err != nil {
 		b.postStatus("登录失败: " + err.Error())
 		b.set("lastError", err.Error())
@@ -378,8 +384,7 @@ func (b *bridge) cmdTestLogin() {
 	b.mu.Lock()
 	b.cfg.AuthMode = auth.ModeAuthlib
 	b.cfg.AuthlibAPI = api
-	b.cfg.AuthlibUser = user
-	b.cfg.AuthlibPass = pass
+	b.cfg.AuthlibUser = user // display / re-login hint only — never store password
 	b.cfg.AccessToken = sess.AccessToken
 	b.cfg.ClientToken = sess.ClientToken
 	b.cfg.ProfileUUID = sess.UUID
@@ -387,7 +392,8 @@ func (b *bridge) cmdTestLogin() {
 	_ = config.Save(b.cfg)
 	b.mu.Unlock()
 	b.set("authMode", auth.ModeAuthlib)
-	b.postStatus("登录成功: " + sess.Username)
+	b.set("profileName", sess.Username)
+	b.postStatus("登录成功: " + sess.Username + "（已保存令牌，未保存密码）")
 }
 
 func (b *bridge) cmdUpdate() {
@@ -436,18 +442,18 @@ func (b *bridge) cmdLaunch() {
 
 	b.saveSettingsFromProps()
 	b.mu.Lock()
-	cfg := b.cfg
-	b.mu.Unlock()
 	ver := b.get("selectedVersion")
 	if ver == "" || strings.HasPrefix(ver, "(") {
+		b.mu.Unlock()
 		b.postStatus("请先选择版本")
 		return
 	}
-	if cfg.JavaPath == "" {
-		cfg.JavaPath = java.Best()
-		b.set("javaPath", cfg.JavaPath)
+	if b.cfg.JavaPath == "" {
+		b.cfg.JavaPath = java.Best()
+		b.set("javaPath", b.cfg.JavaPath)
 	}
-	cmd, err := launch.Launch(context.Background(), cfg, ver, func(msg string) {
+	b.mu.Unlock()
+	cmd, err := launch.Launch(context.Background(), &b.cfg, ver, func(msg string) {
 		b.postStatus(msg)
 	})
 	if err != nil {

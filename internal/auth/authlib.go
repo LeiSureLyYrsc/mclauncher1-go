@@ -32,18 +32,24 @@ type authenticateRequest struct {
 	RequestUser bool   `json:"requestUser"`
 }
 
+type refreshRequest struct {
+	AccessToken string `json:"accessToken"`
+	ClientToken string `json:"clientToken,omitempty"`
+	RequestUser bool   `json:"requestUser"`
+}
+
 type agent struct {
 	Name    string `json:"name"`
 	Version int    `json:"version"`
 }
 
 type authenticateResponse struct {
-	AccessToken string `json:"accessToken"`
-	ClientToken string `json:"clientToken"`
-	SelectedProfile *profile `json:"selectedProfile"`
+	AccessToken       string    `json:"accessToken"`
+	ClientToken       string    `json:"clientToken"`
+	SelectedProfile   *profile  `json:"selectedProfile"`
 	AvailableProfiles []profile `json:"availableProfiles"`
-	Error       string `json:"error"`
-	ErrorMessage string `json:"errorMessage"`
+	Error             string    `json:"error"`
+	ErrorMessage      string    `json:"errorMessage"`
 }
 
 type profile struct {
@@ -52,6 +58,7 @@ type profile struct {
 }
 
 // Login performs POST {api}/authserver/authenticate.
+// The password is used only for this request and must never be persisted by callers.
 func (c *AuthlibClient) Login(ctx context.Context, username, password, clientToken string) (Session, error) {
 	if c.APIRoot == "" {
 		return Session{}, fmt.Errorf("Authlib Injector API 地址为空")
@@ -66,8 +73,28 @@ func (c *AuthlibClient) Login(ctx context.Context, username, password, clientTok
 		ClientToken: clientToken,
 		RequestUser: true,
 	}
+	return c.postAuth(ctx, "/authserver/authenticate", body, clientToken)
+}
+
+// Refresh performs POST {api}/authserver/refresh with stored access/client tokens.
+func (c *AuthlibClient) Refresh(ctx context.Context, accessToken, clientToken string) (Session, error) {
+	if c.APIRoot == "" {
+		return Session{}, fmt.Errorf("Authlib Injector API 地址为空")
+	}
+	if accessToken == "" {
+		return Session{}, fmt.Errorf("accessToken 为空")
+	}
+	body := refreshRequest{
+		AccessToken: accessToken,
+		ClientToken: clientToken,
+		RequestUser: true,
+	}
+	return c.postAuth(ctx, "/authserver/refresh", body, clientToken)
+}
+
+func (c *AuthlibClient) postAuth(ctx context.Context, path string, body any, fallbackClientToken string) (Session, error) {
 	raw, _ := json.Marshal(body)
-	url := c.APIRoot + "/authserver/authenticate"
+	url := c.APIRoot + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
 		return Session{}, err
@@ -85,34 +112,33 @@ func (c *AuthlibClient) Login(ctx context.Context, username, password, clientTok
 	}
 	var ar authenticateResponse
 	if err := json.Unmarshal(data, &ar); err != nil {
-		return Session{}, fmt.Errorf("解析登录响应失败: %w (HTTP %d)", err, resp.StatusCode)
+		return Session{}, fmt.Errorf("解析认证响应失败: %w (HTTP %d)", err, resp.StatusCode)
 	}
 	if ar.Error != "" || ar.ErrorMessage != "" {
 		msg := ar.ErrorMessage
 		if msg == "" {
 			msg = ar.Error
 		}
-		return Session{}, fmt.Errorf("登录失败: %s", msg)
+		return Session{}, fmt.Errorf("认证失败: %s", msg)
 	}
 	if resp.StatusCode >= 400 {
-		return Session{}, fmt.Errorf("登录失败: HTTP %d: %s", resp.StatusCode, string(data))
+		return Session{}, fmt.Errorf("认证失败: HTTP %d: %s", resp.StatusCode, string(data))
 	}
 	prof := ar.SelectedProfile
 	if prof == nil && len(ar.AvailableProfiles) > 0 {
 		prof = &ar.AvailableProfiles[0]
 	}
 	if prof == nil {
-		return Session{}, fmt.Errorf("登录成功但无可用角色")
+		return Session{}, fmt.Errorf("认证成功但无可用角色")
 	}
-	uuid := formatUUID(prof.ID)
 	tok := ar.ClientToken
 	if tok == "" {
-		tok = clientToken
+		tok = fallbackClientToken
 	}
 	return Session{
 		Mode:        ModeAuthlib,
 		Username:    prof.Name,
-		UUID:        uuid,
+		UUID:        formatUUID(prof.ID),
 		AccessToken: ar.AccessToken,
 		ClientToken: tok,
 		UserType:    "mojang",

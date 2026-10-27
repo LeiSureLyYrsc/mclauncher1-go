@@ -29,7 +29,8 @@ Dialog {
         offlineName.text = L.offlineName || "Player"
         authlibAPI.text = L.authlibAPI || ""
         authlibUser.text = L.authlibUser || ""
-        authlibPass.text = L.authlibPass || ""
+        // Password is ephemeral — never reload from config (scheme 1).
+        authlibPass.text = ""
         javaPath.text = L.javaPath || ""
         mem.value = L.maxMemoryMB > 0 ? L.maxMemoryMB : 2048
         debug.checked = (L.debug === true || L.debug === "true" || L.debug === "1")
@@ -96,8 +97,20 @@ Dialog {
                         TextField {
                             id: authlibPass
                             Layout.fillWidth: true
-                            placeholderText: "密码"
+                            placeholderText: "仅用于本次登录，不会保存"
                             echoMode: TextInput.Password
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                        color: "#555"
+                        text: {
+                            var pn = L && L.profileName ? L.profileName : ""
+                            if (pn)
+                                return "已登录角色：" + pn + "（仅保存令牌，不保存密码）"
+                            return "外置登录只保存 access/client 令牌与角色信息，不保存密码。"
                         }
                     }
                     RowLayout {
@@ -106,6 +119,8 @@ Dialog {
                             onClicked: {
                                 pushToLauncher()
                                 if (L) L.cmd = "testLogin"
+                                // Keep field empty after submit so reopen/clear never shows a saved password.
+                                authlibPass.text = ""
                             }
                         }
                         Button {
@@ -178,7 +193,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: "下载源：BMCLAPI（bmclapi2）。未配置 Authlib 时默认离线登录。微软登录稍后实现。"
+            text: "下载源：BMCLAPI（bmclapi2）。未配置 Authlib 时默认离线登录。外置登录只保存 token，不保存密码。微软登录稍后实现。"
             color: "#222"
         }
 
@@ -215,6 +230,7 @@ Dialog {
         L.offlineName = offlineName.text || "Player"
         L.authlibAPI = authlibAPI.text
         L.authlibUser = authlibUser.text
+        // Ephemeral: password only for authenticate; never persisted to config.json.
         L.authlibPass = authlibPass.text
         L.javaPath = javaPath.text
         L.maxMemoryMB = mem.value

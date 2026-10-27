@@ -40,7 +40,7 @@ func main() {
 	}
 	fmt.Println("installed", vj.ID, "main", vj.MainClass)
 
-	cmd, err := launch.Launch(ctx, cfg, id, func(msg string) { fmt.Println(" ", msg) })
+	cmd, err := launch.Launch(ctx, &cfg, id, func(msg string) { fmt.Println(" ", msg) })
 	fmt.Println("launch:", err)
 	if cmd != nil && cmd.Process != nil {
 		fmt.Println("pid", cmd.Process.Pid)

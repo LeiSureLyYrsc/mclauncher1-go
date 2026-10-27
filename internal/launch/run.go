@@ -17,30 +17,44 @@ import (
 type Progress func(msg string)
 
 // PrepareSession resolves offline or authlib session from config.
-func PrepareSession(ctx context.Context, cfg config.Config) (auth.Session, error) {
+// Authlib (scheme 1): uses stored access/client tokens; never reads a password.
+// When tokens are present and API is set, attempts refresh; on refresh failure
+// returns a Chinese error asking the user to re-login. Updated tokens are written
+// back into cfg and persisted when refresh succeeds.
+func PrepareSession(ctx context.Context, cfg *config.Config) (auth.Session, error) {
 	switch cfg.AuthMode {
 	case auth.ModeAuthlib:
-		if cfg.AccessToken != "" && cfg.ProfileName != "" && cfg.ProfileUUID != "" {
-			return auth.Session{
-				Mode:        auth.ModeAuthlib,
-				Username:    cfg.ProfileName,
-				UUID:        cfg.ProfileUUID,
-				AccessToken: cfg.AccessToken,
-				ClientToken: cfg.ClientToken,
-				UserType:    "mojang",
-				AuthlibAPI:  cfg.AuthlibAPI,
-			}, nil
+		if cfg.AccessToken == "" || cfg.ProfileName == "" || cfg.ProfileUUID == "" {
+			return auth.Session{}, fmt.Errorf("外置登录未登录或已失效，请在设置中重新登录")
 		}
-		if cfg.AuthlibAPI == "" || cfg.AuthlibUser == "" || cfg.AuthlibPass == "" {
-			// fall back to offline rather than hard-fail
-			return auth.OfflineSession(cfg.OfflineName), nil
+		// Prefer refresh when API + tokens are available (Yggdrasil /authserver/refresh).
+		if cfg.AuthlibAPI != "" && cfg.AccessToken != "" {
+			cli := auth.NewAuthlibClient(cfg.AuthlibAPI)
+			sess, err := cli.Refresh(ctx, cfg.AccessToken, cfg.ClientToken)
+			if err == nil {
+				cfg.AccessToken = sess.AccessToken
+				if sess.ClientToken != "" {
+					cfg.ClientToken = sess.ClientToken
+				}
+				cfg.ProfileUUID = sess.UUID
+				cfg.ProfileName = sess.Username
+				cfg.AuthlibAPI = sess.AuthlibAPI
+				_ = config.Save(*cfg)
+				return sess, nil
+			}
+			// Refresh failed → require interactive re-login (password is not stored).
+			return auth.Session{}, fmt.Errorf("外置登录已失效，请重新登录（刷新令牌失败：%v）", err)
 		}
-		cli := auth.NewAuthlibClient(cfg.AuthlibAPI)
-		sess, err := cli.Login(ctx, cfg.AuthlibUser, cfg.AuthlibPass, cfg.ClientToken)
-		if err != nil {
-			return auth.Session{}, err
-		}
-		return sess, nil
+		// No API URL to refresh against: use stored access token as-is.
+		return auth.Session{
+			Mode:        auth.ModeAuthlib,
+			Username:    cfg.ProfileName,
+			UUID:        cfg.ProfileUUID,
+			AccessToken: cfg.AccessToken,
+			ClientToken: cfg.ClientToken,
+			UserType:    "mojang",
+			AuthlibAPI:  cfg.AuthlibAPI,
+		}, nil
 	default:
 		return auth.OfflineSession(cfg.OfflineName), nil
 	}
@@ -72,7 +86,7 @@ func UpdateVersion(ctx context.Context, cfg config.Config, versionID string, pro
 }
 
 // Launch starts the game process. If version files are missing, returns an error suggesting update.
-func Launch(ctx context.Context, cfg config.Config, versionID string, progress Progress) (*exec.Cmd, error) {
+func Launch(ctx context.Context, cfg *config.Config, versionID string, progress Progress) (*exec.Cmd, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -151,4 +165,3 @@ func Launch(ctx context.Context, cfg config.Config, versionID string, progress P
 	}
 	return cmd, nil
 }
-
