@@ -107,7 +107,7 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: |
-          set -euo pipefail
+          set -eu
           # Prefer UCRT64 toolchain (gcc/pkg-config) over any Windows MSVC tools.
           export PATH="/ucrt64/bin:${PATH}"
           # Belt-and-suspenders: if inherit missed Go, map GOROOT into MSYS paths.
@@ -131,7 +131,8 @@ jobs:
       - name: Package Windows runtime (windeployqt + MinGW DLLs)
         shell: msys2 {0}
         run: |
-          set -euo pipefail
+          # No pipefail: windeployqt/zip/log pipes on Windows runners often yield SIGPIPE (141).
+          set -eu
           export PATH="/ucrt64/bin:${PATH}"
           DEST=dist/mclauncher-windows-amd64
           rm -rf dist
@@ -185,14 +186,16 @@ jobs:
           DEPLOYED=0
           if [ -n "$WDQ" ]; then
             echo "Using $WDQ"
+            # Quiet logs: huge QML deploy spam + Actions log pipe caused exit 141 under pipefail.
             # --qmldir so QML modules/plugins ship with the app.
             # Do not fail the job if windeployqt errors — fall back to manual copy.
-            if "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe"; then
+            if "$WDQ" --release --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
               DEPLOYED=1
-            elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe"; then
+            elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
               DEPLOYED=1
             else
               echo "windeployqt failed; falling back to manual DLL copy" >&2
+              tail -n 40 /tmp/windeployqt.log >&2 || true
             fi
           else
             echo "windeployqt not found; falling back to manual DLL copy"
@@ -200,6 +203,8 @@ jobs:
 
           if [ "$DEPLOYED" -eq 0 ]; then
             copy_qt_fallback
+          else
+            echo "windeployqt ok (log: /tmp/windeployqt.log)"
           fi
 
           # Always ship MinGW runtime next to the exe (fixes missing libgcc_s_seh-1.dll).
@@ -216,17 +221,20 @@ jobs:
           test -f "$DEST/libstdc++-6.dll"
           test -f "$DEST/libwinpthread-1.dll"
 
-          # Avoid SIGPIPE/exit 141 under pipefail: never pipe find into head.
-          echo "Packaged contents:"
-          find "$DEST" -type f | sort > /tmp/pkg-list.txt
-          echo "Total files: $(wc -l < /tmp/pkg-list.txt)"
-          sed -n '1,200p' /tmp/pkg-list.txt
+          # No pipes: avoid SIGPIPE under any shell options.
+          find "$DEST" -type f > /tmp/pkg-list.txt
+          sort -o /tmp/pkg-list.txt /tmp/pkg-list.txt
+          echo "Packaged files: $(wc -l < /tmp/pkg-list.txt)"
+          echo "Key artifacts:"
+          ls -la "$DEST/mclauncher.exe" "$DEST/libgcc_s_seh-1.dll" "$DEST/libstdc++-6.dll" "$DEST/libwinpthread-1.dll"
+          ls -la "$DEST/platforms" 2>/dev/null || echo "(no platforms/ yet)"
+          ls -la "$DEST/qml" 2>/dev/null || echo "(no qml/ yet)"
 
           if ! command -v zip >/dev/null 2>&1; then
             echo "ERROR: zip not found on PATH" >&2
             exit 1
           fi
-          (cd dist && zip -r mclauncher-windows-amd64.zip mclauncher-windows-amd64)
+          (cd dist && zip -q -r mclauncher-windows-amd64.zip mclauncher-windows-amd64)
           ls -la dist/mclauncher-windows-amd64.zip
 
       - name: Upload artifact
