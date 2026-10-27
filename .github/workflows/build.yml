@@ -167,34 +167,43 @@ jobs:
           mkdir -p "$DEST"
           cp -f mclauncher.exe "$DEST/"
 
-          copy_qt_fallback() {
-            echo "Copying common Qt6 DLLs/plugins from /ucrt64"
+          # MinGW + Qt transitive deps. windeployqt copies Qt6*.dll and plugins but
+          # does NOT ship ICU/zlib/pcre/freetype/etc. Skipping this is why clean
+          # Windows PCs fail to start (missing DLL, often invisible under SFX).
+          copy_mingw_qt_deps() {
+            echo "Copying MinGW/Qt dependency DLLs from /ucrt64/bin"
             shopt -s nullglob
             for pattern in \
-              Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll \
+              Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6OpenGL.dll \
               Qt6Qml.dll Qt6QmlModels.dll Qt6QmlWorkerScript.dll Qt6QmlMeta.dll \
               Qt6Quick.dll Qt6QuickControls2.dll Qt6QuickControls2Impl.dll \
               Qt6QuickLayouts.dll Qt6QuickTemplates2.dll \
               Qt6QuickDialogs2.dll Qt6QuickDialogs2QuickImpl.dll Qt6QuickDialogs2Utils.dll \
-              Qt6OpenGL.dll Qt6Svg.dll Qt6SvgWidgets.dll \
+              Qt6Svg.dll Qt6SvgWidgets.dll \
+              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
               libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll \
               libdouble-conversion.dll libfreetype-6.dll libglib-2.0-0.dll \
               libgraphite2.dll libharfbuzz-0.dll libiconv-2.dll \
               libicudt*.dll libicuin*.dll libicuuc*.dll \
               libintl-8.dll libmd4c.dll libpcre2-16-0.dll libpcre2-8-0.dll \
               libpng16-16.dll libzstd.dll zlib1.dll \
-              libssl-3-x64.dll libcrypto-3-x64.dll; do
+              libssl-3-x64.dll libcrypto-3-x64.dll \
+              libEGL.dll libGLESv2.dll opengl32sw.dll D3Dcompiler_47.dll; do
               for f in /ucrt64/bin/$pattern; do
                 [ -f "$f" ] && cp -f "$f" "$DEST/"
               done
             done
-            for plugindir in platforms styles imageformats tls networkinformation iconengines; do
+          }
+
+          copy_qt_plugins_fallback() {
+            echo "Copying common Qt6 plugins/qml from /ucrt64 (fallback)"
+            shopt -s nullglob
+            for plugindir in platforms styles imageformats tls networkinformation iconengines generic; do
               if [ -d "/ucrt64/share/qt6/plugins/$plugindir" ]; then
                 mkdir -p "$DEST/$plugindir"
                 cp -f /ucrt64/share/qt6/plugins/$plugindir/*.dll "$DEST/$plugindir/" 2>/dev/null || true
               fi
             done
-            # Best-effort QML runtime modules (windeployqt normally handles this)
             if [ -d /ucrt64/share/qt6/qml ]; then
               mkdir -p "$DEST/qml"
               cp -a /ucrt64/share/qt6/qml/QtQml "$DEST/qml/" 2>/dev/null || true
@@ -222,32 +231,46 @@ jobs:
             elif "$WDQ" --qmldir qml "$DEST/mclauncher.exe" > /tmp/windeployqt.log 2>&1; then
               DEPLOYED=1
             else
-              echo "windeployqt failed; falling back to manual DLL copy" >&2
+              echo "windeployqt failed; falling back to manual plugin/qml copy" >&2
               tail -n 40 /tmp/windeployqt.log >&2 || true
             fi
           else
-            echo "windeployqt not found; falling back to manual DLL copy"
+            echo "windeployqt not found; falling back to manual plugin/qml copy"
           fi
 
           if [ "$DEPLOYED" -eq 0 ]; then
-            copy_qt_fallback
+            copy_qt_plugins_fallback
           else
             echo "windeployqt ok (log: /tmp/windeployqt.log)"
           fi
 
-          # Always ship MinGW runtime next to the exe (fixes missing libgcc_s_seh-1.dll).
-          for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
-            if [ ! -f "/ucrt64/bin/$dll" ]; then
-              echo "ERROR: missing /ucrt64/bin/$dll" >&2
-              exit 1
-            fi
-            cp -f "/ucrt64/bin/$dll" "$DEST/"
-          done
+          # ALWAYS copy MinGW/Qt deps — windeployqt never ships these for MSYS2 builds.
+          copy_mingw_qt_deps
+
+          # qt.conf so Qt resolves platforms/ and qml/ next to the exe.
+          if [ ! -f "$DEST/qt.conf" ]; then
+            printf '%s\n' '[Paths]' 'Prefix=.' 'Plugins=.' 'QmlImports=qml' 'Libraries=.' > "$DEST/qt.conf"
+          fi
 
           test -f "$DEST/mclauncher.exe"
           test -f "$DEST/libgcc_s_seh-1.dll"
           test -f "$DEST/libstdc++-6.dll"
           test -f "$DEST/libwinpthread-1.dll"
+          test -f "$DEST/platforms/qwindows.dll"
+          # These are required by Qt6Core/Gui on MSYS2 UCRT64; missing = silent fail on clean PCs.
+          test -f "$DEST/libpcre2-16-0.dll"
+          test -f "$DEST/zlib1.dll"
+          test -f "$DEST/libzstd.dll"
+          test -f "$DEST/libdouble-conversion.dll"
+          test -f "$DEST/libb2-1.dll"
+          test -f "$DEST/libfreetype-6.dll"
+          test -f "$DEST/libharfbuzz-0.dll"
+          test -f "$DEST/libmd4c.dll"
+          test -f "$DEST/libpng16-16.dll"
+          # ICU major version varies; require at least one of each family.
+          test -n "$(ls "$DEST"/libicuuc*.dll 2>/dev/null || true)"
+          test -n "$(ls "$DEST"/libicuin*.dll 2>/dev/null || true)"
+          test -n "$(ls "$DEST"/libicudt*.dll 2>/dev/null || true)"
 
           # No pipes: avoid SIGPIPE under any shell options.
           find "$DEST" -type f > /tmp/pkg-list.txt
@@ -255,7 +278,8 @@ jobs:
           echo "Packaged files: $(wc -l < /tmp/pkg-list.txt)"
           echo "Key artifacts:"
           ls -la "$DEST/mclauncher.exe" "$DEST/libgcc_s_seh-1.dll" "$DEST/libstdc++-6.dll" "$DEST/libwinpthread-1.dll"
-          ls -la "$DEST/platforms" 2>/dev/null || echo "(no platforms/ yet)"
+          ls -la "$DEST/platforms/qwindows.dll" "$DEST/libpcre2-16-0.dll" "$DEST/zlib1.dll" "$DEST/qt.conf"
+          ls -la "$DEST"/libicu*.dll
           ls -la "$DEST/qml" 2>/dev/null || echo "(no qml/ yet)"
 
           if ! command -v zip >/dev/null 2>&1; then

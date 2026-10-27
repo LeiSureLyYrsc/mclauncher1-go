@@ -92,15 +92,21 @@ func LoadMainQML() error {
 }
 
 func resolveGameDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
+	// SFX stub sets MCLAUNCHER_CWD to the user's launch directory and may
+	// chdir into the extracted Qt runtime cache; prefer the launch dir.
+	dir := strings.TrimSpace(os.Getenv("MCLAUNCHER_CWD"))
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			dir = "."
+		}
 	}
 	mc := filepath.Join(dir, ".minecraft")
 	if st, err := os.Stat(mc); err == nil && st.IsDir() {
 		return mc
 	}
-	// Prefer creating .minecraft beside the binary/cwd for installs.
+	// Prefer creating .minecraft beside the launch cwd for installs.
 	_ = os.MkdirAll(mc, 0o755)
 	return mc
 }

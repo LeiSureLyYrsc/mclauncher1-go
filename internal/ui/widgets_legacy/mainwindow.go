@@ -2,6 +2,7 @@ package widgets_legacy
 
 import (
 	"os"
+	"strings"
 	"path/filepath"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -107,11 +108,15 @@ func NewMainWindow() *MainWindow {
 	mw.btnOpenDir.SetCursor(qt.NewQCursor2(qt.PointingHandCursor))
 	mw.btnOpenDir.SetFlat(true)
 	mw.btnOpenDir.OnClicked(func() {
-		dir, err := os.Getwd()
-		if err != nil {
-			dir = "."
+		dir := strings.TrimSpace(os.Getenv("MCLAUNCHER_CWD"))
+		if dir == "" {
+			var err error
+			dir, err = os.Getwd()
+			if err != nil {
+				dir = "."
+			}
 		}
-		// Prefer .minecraft next to cwd if present.
+		// Prefer .minecraft next to launch cwd if present.
 		mc := filepath.Join(dir, ".minecraft")
 		if st, err := os.Stat(mc); err == nil && st.IsDir() {
 			dir = mc
