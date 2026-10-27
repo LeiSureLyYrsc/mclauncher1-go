@@ -49,101 +49,125 @@ ApplicationWindow {
         }
     }
 
-    // --- Right control cluster (geometry from Widgets 1:1 layout) ---
-    // Colors use Qt #AARRGGBB
+    // Classic flat Win32-like button chrome (opaque gray, 1px border, square).
+    component WinBtnBg: Rectangle {
+        property bool down: false
+        property bool hovered: false
+        color: down ? "#e1e1e1" : (hovered ? "#f5f5f5" : "#f0f0f0")
+        border.color: "#a0a0a0"
+        border.width: 1
+        radius: 0
+    }
+
+    // --- Right control cluster (tightened vs original 720×450 mask) ---
+    // Launch widened (≥100) so full 「启动游戏」 fits; side stack flush-top.
 
     Button {
         id: btnLaunch
-        x: 400; y: 283; width: 88; height: 30
+        x: 400; y: 280; width: 102; height: 34
         z: 2
         text: "启动游戏"
-        font.pixelSize: 14
+        font.pixelSize: 13
         font.bold: true
-        background: Rectangle {
-            color: btnLaunch.down ? "#ffdcdcdc" : (btnLaunch.hovered ? "#f5ffffff" : "#e6f5f5f5")
-            border.color: "#c8b4b4b4"
-            border.width: 1
+        padding: 0
+        leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+        background: WinBtnBg {
+            down: btnLaunch.down
+            hovered: btnLaunch.hovered
         }
         contentItem: Text {
             text: btnLaunch.text
             font: btnLaunch.font
-            color: "#ff1a1a1a"
+            color: "#000000"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideNone
+            clip: false
         }
         onClicked: launchDlg.open()
     }
 
     Button {
         id: btnUpdate
-        x: 492; y: 283; width: 52; height: 14
+        x: 506; y: 280; width: 64; height: 16
         z: 2
         text: "更新游戏"
         font.pixelSize: 11
-        background: Rectangle {
-            color: btnUpdate.down ? "#ffdcdcdc" : (btnUpdate.hovered ? "#f5ffffff" : "#e6f5f5f5")
-            border.color: "#c8b4b4b4"
-            border.width: 1
+        padding: 0
+        leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+        background: WinBtnBg {
+            down: btnUpdate.down
+            hovered: btnUpdate.hovered
         }
         contentItem: Text {
             text: btnUpdate.text
             font: btnUpdate.font
-            color: "#ff1a1a1a"
+            color: "#000000"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideNone
+            clip: false
         }
         onClicked: updateDlg.open()
     }
 
     Button {
         id: btnSettings
-        x: 492; y: 299; width: 52; height: 14
+        x: 506; y: 298; width: 64; height: 16
         z: 2
         text: "设置"
         font.pixelSize: 11
-        background: Rectangle {
-            color: btnSettings.down ? "#ffdcdcdc" : (btnSettings.hovered ? "#f5ffffff" : "#e6f5f5f5")
-            border.color: "#c8b4b4b4"
-            border.width: 1
+        padding: 0
+        leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+        background: WinBtnBg {
+            down: btnSettings.down
+            hovered: btnSettings.hovered
         }
         contentItem: Text {
             text: btnSettings.text
             font: btnSettings.font
-            color: "#ff1a1a1a"
+            color: "#000000"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideNone
+            clip: false
         }
         onClicked: settingsDialog.open()
     }
 
     ComboBox {
         id: combo
-        x: 401; y: 320; width: 100; height: 16
+        x: 400; y: 318; width: 120; height: 19
         z: 2
         model: ["(默认)", "正式版", "快照预览版"]
         font.pixelSize: 11
+        padding: 0
+        leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
         background: Rectangle {
-            color: "#ebfafafa"
-            border.color: "#c8a0a0a0"
+            color: "#ffffff"
+            border.color: "#a0a0a0"
             border.width: 1
+            radius: 0
         }
         contentItem: Text {
-            leftPadding: 6
+            leftPadding: 4
+            rightPadding: 18
             text: combo.displayText
             font: combo.font
-            color: "#ff1a1a1a"
+            color: "#000000"
             verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+            elide: Text.ElideNone
+            clip: true
         }
         indicator: Item {
-            width: 18
+            width: 16
             height: parent.height
             anchors.right: parent.right
             Text {
                 anchors.centerIn: parent
-                text: "▾"
-                font.pixelSize: 10
-                color: "#ff333333"
+                text: "▼"
+                font.pixelSize: 8
+                color: "#000000"
             }
         }
         popup: Popup {
@@ -159,18 +183,19 @@ ApplicationWindow {
                 ScrollIndicator.vertical: ScrollIndicator {}
             }
             background: Rectangle {
-                color: "#fffafafa"
-                border.color: "#ffaaaaaa"
+                color: "#ffffff"
+                border.color: "#a0a0a0"
+                radius: 0
             }
         }
     }
 
     Text {
         id: openDir
-        x: 510; y: 318; width: 72; height: 18
+        x: 528; y: 318; width: 72; height: 20
         z: 2
         text: "打开目录"
-        color: openDirMa.containsMouse ? "#ffffe08a" : "#ffffffff"
+        color: openDirMa.containsMouse ? "#ffe08a" : "#ffffff"
         font.pixelSize: 11
         font.underline: openDirMa.containsMouse
         verticalAlignment: Text.AlignVCenter
@@ -201,22 +226,25 @@ ApplicationWindow {
 
     Button {
         id: btnClose
-        x: 692; y: 4; width: 22; height: 20
+        x: 698; y: 4; width: 18; height: 18
         z: 3
         text: "×"
         font.pixelSize: 12
         font.bold: true
+        padding: 0
+        leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
         background: Rectangle {
-            color: btnClose.hovered ? "#ffe81123" : "#28000000"
-            border.color: btnClose.hovered ? "#ffe81123" : "#50ffffff"
-            border.width: 1
+            color: btnClose.hovered ? "#e81123" : "#00000000"
+            border.width: 0
+            radius: 0
         }
         contentItem: Text {
             text: btnClose.text
             font: btnClose.font
-            color: "#ffffffff"
+            color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideNone
         }
         onClicked: Qt.quit()
     }
