@@ -7,7 +7,7 @@
 - **下载源**：BMCLAPI（`https://bmclapi2.bangbang93.com`）——版本清单、客户端、依赖库、资源文件、authlib-injector 镜像
 - **登录**：
   - **离线登录**（默认，无需配置；默认名 `Player`，离线 UUID）
-  - **Authlib Injector** 外置登录（Yggdrasil 兼容：`/authserver/authenticate`）
+  - **Authlib Injector** 外置登录（Yggdrasil 兼容：`/authserver/authenticate` + `/authserver/refresh`）。**外置登录只保存 token，不保存密码**（方案 1：成功后仅持久化 accessToken / clientToken / 角色与 API 地址、显示用用户名）
   - **微软登录**：TODO（尚未实现）
 - **版本**：从 BMCLAPI 拉取完整版本列表；支持正式版 / 快照 / 全部筛选；「更新游戏」安装所选版本
 - **Java**：自动嗅探 `JAVA_HOME`、PATH 与常见安装目录
@@ -66,7 +66,7 @@ assets/                   背景图
 1. 首次打开会从 BMCLAPI 加载版本列表；在下拉框选择版本
 2. 点击「更新游戏」下载该版本（客户端、库、资源）
 3. 未配置 Authlib 时直接「启动游戏」即为离线模式
-4. 设置中可切换 Authlib、填写 API 地址并「登录测试」；可「嗅探」Java
+4. 设置中可切换 Authlib、填写 API 地址并「登录测试」（密码仅用于当次认证，不写入 config.json）；下次启动若令牌有效则刷新使用，刷新失败需重新登录；可「嗅探」Java
 
 ## License
 

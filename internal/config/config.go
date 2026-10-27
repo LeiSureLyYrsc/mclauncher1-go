@@ -7,14 +7,15 @@ import (
 )
 
 // Config is persisted launcher settings (JSON under gameDir/.mclauncher/config.json).
+// Authlib scheme 1: never persist passwords — only tokens + profile + display username.
 type Config struct {
-	AuthMode      string `json:"authMode"`      // offline | authlib
+	AuthMode      string `json:"authMode"` // offline | authlib
 	OfflineName   string `json:"offlineName"`
 	AuthlibAPI    string `json:"authlibAPI"`
-	AuthlibUser   string `json:"authlibUser"`
-	AuthlibPass   string `json:"authlibPass"`   // stored locally; not encrypted (simple launcher)
+	AuthlibUser   string `json:"authlibUser"` // email/username for display & re-login; not a secret
 	AccessToken   string `json:"accessToken,omitempty"`
 	ClientToken   string `json:"clientToken,omitempty"`
+	RefreshToken  string `json:"refreshToken,omitempty"` // reserved; Yggdrasil refresh uses access+client
 	ProfileUUID   string `json:"profileUUID,omitempty"`
 	ProfileName   string `json:"profileName,omitempty"`
 	JavaPath      string `json:"javaPath"`
@@ -49,7 +50,17 @@ func Load(gameDir string) (Config, error) {
 		}
 		return cfg, err
 	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	// Decode into a map first so legacy authlibPass is never kept on the struct.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return cfg, err
+	}
+	delete(raw, "authlibPass")
+	cleaned, err := json.Marshal(raw)
+	if err != nil {
+		return cfg, err
+	}
+	if err := json.Unmarshal(cleaned, &cfg); err != nil {
 		return cfg, err
 	}
 	if cfg.GameDir == "" {
@@ -72,6 +83,7 @@ func Save(cfg Config) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	// Explicit omit: never write a password field, even if an older build left one on disk.
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
