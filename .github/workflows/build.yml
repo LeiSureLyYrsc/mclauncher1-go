@@ -181,18 +181,24 @@ jobs:
               Qt6QuickDialogs2.dll Qt6QuickDialogs2QuickImpl.dll Qt6QuickDialogs2Utils.dll \
               Qt6Svg.dll Qt6SvgWidgets.dll \
               libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
-              libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll \
+              libb2-1.dll libbrotlicommon.dll libbrotlicommon-1.dll \
+              libbrotlidec.dll libbrotlidec-1.dll libbz2-1.dll \
               libdouble-conversion.dll libfreetype-6.dll libglib-2.0-0.dll \
-              libgraphite2.dll libharfbuzz-0.dll libiconv-2.dll \
+              libgraphite2.dll libgraphite2-3.dll libharfbuzz-0.dll libiconv-2.dll \
               libicudt*.dll libicuin*.dll libicuuc*.dll \
               libintl-8.dll libmd4c.dll libpcre2-16-0.dll libpcre2-8-0.dll \
               libpng16-16.dll libzstd.dll zlib1.dll \
               libssl-3-x64.dll libcrypto-3-x64.dll \
               libEGL.dll libGLESv2.dll opengl32sw.dll D3Dcompiler_47.dll; do
               for f in /ucrt64/bin/$pattern; do
-                [ -f "$f" ] && cp -f "$f" "$DEST/"
+                # if/fi (not "test && cp"): last missing optional DLL must not make
+                # this function return 1 under set -e.
+                if [ -f "$f" ]; then
+                  cp -f "$f" "$DEST/"
+                fi
               done
             done
+            return 0
           }
 
           copy_qt_plugins_fallback() {
@@ -210,6 +216,7 @@ jobs:
               cp -a /ucrt64/share/qt6/qml/QtQuick "$DEST/qml/" 2>/dev/null || true
               cp -a /ucrt64/share/qt6/qml/QML "$DEST/qml/" 2>/dev/null || true
             fi
+            return 0
           }
 
           WDQ=""
@@ -252,25 +259,40 @@ jobs:
             printf '%s\n' '[Paths]' 'Prefix=.' 'Plugins=.' 'QmlImports=qml' 'Libraries=.' > "$DEST/qt.conf"
           fi
 
-          test -f "$DEST/mclauncher.exe"
-          test -f "$DEST/libgcc_s_seh-1.dll"
-          test -f "$DEST/libstdc++-6.dll"
-          test -f "$DEST/libwinpthread-1.dll"
-          test -f "$DEST/platforms/qwindows.dll"
+          require_file() {
+            if [ ! -f "$1" ]; then
+              echo "ERROR: missing required file: $1" >&2
+              ls -la "$(dirname "$1")" >&2 || true
+              exit 1
+            fi
+          }
+          require_glob() {
+            # shellcheck disable=SC2086
+            if ! ls $1 >/dev/null 2>&1; then
+              echo "ERROR: no files matching $1" >&2
+              ls -la "$DEST" >&2 || true
+              exit 1
+            fi
+          }
+          require_file "$DEST/mclauncher.exe"
+          require_file "$DEST/libgcc_s_seh-1.dll"
+          require_file "$DEST/libstdc++-6.dll"
+          require_file "$DEST/libwinpthread-1.dll"
+          require_file "$DEST/platforms/qwindows.dll"
           # These are required by Qt6Core/Gui on MSYS2 UCRT64; missing = silent fail on clean PCs.
-          test -f "$DEST/libpcre2-16-0.dll"
-          test -f "$DEST/zlib1.dll"
-          test -f "$DEST/libzstd.dll"
-          test -f "$DEST/libdouble-conversion.dll"
-          test -f "$DEST/libb2-1.dll"
-          test -f "$DEST/libfreetype-6.dll"
-          test -f "$DEST/libharfbuzz-0.dll"
-          test -f "$DEST/libmd4c.dll"
-          test -f "$DEST/libpng16-16.dll"
+          require_file "$DEST/libpcre2-16-0.dll"
+          require_file "$DEST/zlib1.dll"
+          require_file "$DEST/libzstd.dll"
+          require_file "$DEST/libdouble-conversion.dll"
+          require_file "$DEST/libb2-1.dll"
+          require_file "$DEST/libfreetype-6.dll"
+          require_file "$DEST/libharfbuzz-0.dll"
+          require_file "$DEST/libmd4c.dll"
+          require_file "$DEST/libpng16-16.dll"
           # ICU major version varies; require at least one of each family.
-          test -n "$(ls "$DEST"/libicuuc*.dll 2>/dev/null || true)"
-          test -n "$(ls "$DEST"/libicuin*.dll 2>/dev/null || true)"
-          test -n "$(ls "$DEST"/libicudt*.dll 2>/dev/null || true)"
+          require_glob "$DEST"/libicuuc*.dll
+          require_glob "$DEST"/libicuin*.dll
+          require_glob "$DEST"/libicudt*.dll
 
           # No pipes: avoid SIGPIPE under any shell options.
           find "$DEST" -type f > /tmp/pkg-list.txt
