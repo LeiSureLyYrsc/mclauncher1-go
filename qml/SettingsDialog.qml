@@ -8,58 +8,117 @@ Dialog {
     title: "游戏设置"
     modal: true
     anchors.centerIn: Overlay.overlay
-    width: 420
-    height: 460
+    width: 440
+    height: 520
     standardButtons: Dialog.NoButton
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+    property var L: typeof launcher !== "undefined" ? launcher : null
 
     background: Rectangle {
         color: "#f0f0f0"
         border.color: "#999"
     }
 
+    onAboutToShow: {
+        if (!L) return
+        if (L.authMode === "authlib")
+            modeAuthlib.checked = true
+        else
+            modeOffline.checked = true
+        offlineName.text = L.offlineName || "Player"
+        authlibAPI.text = L.authlibAPI || ""
+        authlibUser.text = L.authlibUser || ""
+        authlibPass.text = L.authlibPass || ""
+        javaPath.text = L.javaPath || ""
+        mem.value = L.maxMemoryMB > 0 ? L.maxMemoryMB : 2048
+        debug.checked = (L.debug === true || L.debug === "true" || L.debug === "1")
+        if (L.versionFilter === "all")
+            filterAll.checked = true
+        else if (L.versionFilter === "snapshot")
+            filterSnap.checked = true
+        else
+            filterRelease.checked = true
+    }
+
     contentItem: ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
-        spacing: 10
+        spacing: 8
 
         GroupBox {
-            title: "正版登录（旧版 Mojang / Yggdrasil）"
+            title: "账户"
             Layout.fillWidth: true
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 6
                 RowLayout {
-                    Label { text: "邮箱"; Layout.preferredWidth: 48 }
-                    TextField {
-                        id: email
-                        Layout.fillWidth: true
-                        placeholderText: "帐号邮箱"
+                    RadioButton {
+                        id: modeOffline
+                        text: "离线登录"
+                        checked: true
+                    }
+                    RadioButton {
+                        id: modeAuthlib
+                        text: "Authlib Injector"
                     }
                 }
                 RowLayout {
-                    Label { text: "密码"; Layout.preferredWidth: 48 }
+                    visible: modeOffline.checked
+                    Label { text: "游戏名"; Layout.preferredWidth: 72 }
                     TextField {
-                        id: pass
+                        id: offlineName
                         Layout.fillWidth: true
-                        placeholderText: "密码"
-                        echoMode: TextInput.Password
+                        placeholderText: "Player（默认离线名）"
                     }
                 }
-                RowLayout {
-                    Button {
-                        text: "正版登录测试"
-                        onClicked: loginTestDlg.open()
-                    }
-                    Button {
-                        text: "删除正版信息"
-                        onClicked: {
-                            email.text = ""
-                            pass.text = ""
-                            clearDlg.open()
+                ColumnLayout {
+                    visible: modeAuthlib.checked
+                    spacing: 6
+                    RowLayout {
+                        Label { text: "API 地址"; Layout.preferredWidth: 72 }
+                        TextField {
+                            id: authlibAPI
+                            Layout.fillWidth: true
+                            placeholderText: "https://example.com/api/yggdrasil"
                         }
                     }
-                    Item { Layout.fillWidth: true }
+                    RowLayout {
+                        Label { text: "用户名"; Layout.preferredWidth: 72 }
+                        TextField {
+                            id: authlibUser
+                            Layout.fillWidth: true
+                            placeholderText: "邮箱 / 用户名"
+                        }
+                    }
+                    RowLayout {
+                        Label { text: "密码"; Layout.preferredWidth: 72 }
+                        TextField {
+                            id: authlibPass
+                            Layout.fillWidth: true
+                            placeholderText: "密码"
+                            echoMode: TextInput.Password
+                        }
+                    }
+                    RowLayout {
+                        Button {
+                            text: "登录测试"
+                            onClicked: {
+                                pushToLauncher()
+                                if (L) L.cmd = "testLogin"
+                            }
+                        }
+                        Button {
+                            text: "清除登录"
+                            onClicked: {
+                                if (L) L.cmd = "clearAuth"
+                                authlibUser.text = ""
+                                authlibPass.text = ""
+                                modeOffline.checked = true
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
                 }
             }
         }
@@ -71,11 +130,20 @@ Dialog {
                 anchors.fill: parent
                 spacing: 6
                 RowLayout {
-                    Label { text: "java路径"; Layout.preferredWidth: 64 }
+                    Label { text: "Java 路径"; Layout.preferredWidth: 72 }
                     TextField {
                         id: javaPath
                         Layout.fillWidth: true
-                        placeholderText: "java路径 / javaw"
+                        placeholderText: "自动嗅探 / 手动指定"
+                    }
+                    Button {
+                        text: "嗅探"
+                        onClicked: {
+                            if (L) L.cmd = "sniffJava"
+                            Qt.callLater(function() {
+                                if (L) javaPath.text = L.javaPath || javaPath.text
+                            })
+                        }
                     }
                     Button {
                         text: "浏览"
@@ -83,27 +151,26 @@ Dialog {
                     }
                 }
                 RowLayout {
-                    Label { text: "最大内存"; Layout.preferredWidth: 64 }
+                    Label { text: "最大内存"; Layout.preferredWidth: 72 }
                     SpinBox {
                         id: mem
                         from: 512
                         to: 16384
-                        value: 1024
+                        value: 2048
                         editable: true
+                        stepSize: 256
                     }
                     Label { text: "M" }
                 }
                 RowLayout {
-                    Label { text: "游戏名字"; Layout.preferredWidth: 64 }
-                    TextField {
-                        id: player
-                        Layout.fillWidth: true
-                        placeholderText: "输入游戏名字"
-                    }
+                    Label { text: "版本筛选"; Layout.preferredWidth: 72 }
+                    RadioButton { id: filterRelease; text: "正式版"; checked: true }
+                    RadioButton { id: filterSnap; text: "快照" }
+                    RadioButton { id: filterAll; text: "全部" }
                 }
                 CheckBox {
                     id: debug
-                    text: "调试模式"
+                    text: "调试模式（输出到控制台）"
                 }
             }
         }
@@ -111,8 +178,16 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: "说明：当前为 UI 壳。下一步实现旧版 Mojang 登录，再后是 Microsoft 授权。"
+            text: "下载源：BMCLAPI（bmclapi2）。未配置 Authlib 时默认离线登录。微软登录稍后实现。"
             color: "#222"
+        }
+
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: L ? ("状态：" + (L.status || "")) : ""
+            color: "#444"
+            font.pixelSize: 11
         }
 
         Item { Layout.fillHeight: true }
@@ -122,7 +197,8 @@ Dialog {
             Button {
                 text: "保存设置"
                 onClicked: {
-                    saveDlg.open()
+                    pushToLauncher()
+                    if (L) L.cmd = "saveSettings"
                     root.accept()
                 }
             }
@@ -133,36 +209,33 @@ Dialog {
         }
     }
 
+    function pushToLauncher() {
+        if (!L) return
+        L.authMode = modeAuthlib.checked ? "authlib" : "offline"
+        L.offlineName = offlineName.text || "Player"
+        L.authlibAPI = authlibAPI.text
+        L.authlibUser = authlibUser.text
+        L.authlibPass = authlibPass.text
+        L.javaPath = javaPath.text
+        L.maxMemoryMB = mem.value
+        L.debug = debug.checked
+        var f = "release"
+        if (filterSnap.checked) f = "snapshot"
+        if (filterAll.checked) f = "all"
+        L.versionFilter = f
+    }
+
     FileDialog {
         id: javaDlg
-        title: "选择java"
+        title: "选择 Java"
         fileMode: FileDialog.OpenFile
-        nameFilters: ["Java (java javaw)", "All (*)"]
+        nameFilters: ["Java (java javaw java.exe javaw.exe)", "All (*)"]
         onAccepted: {
             var u = selectedFile.toString()
             if (u.indexOf("file://") === 0)
-                javaPath.text = decodeURIComponent(u.replace("file://", ""))
+                javaPath.text = decodeURIComponent(u.replace(/file:\/\//, ""))
             else
                 javaPath.text = u
         }
-    }
-
-    MessageDialog {
-        id: loginTestDlg
-        title: "正版登录测试"
-        text: "网络登录尚未实现。\n此处预留旧版 Mojang Yggdrasil（邮箱/密码）接口；Microsoft OAuth 将在其后接入。"
-        buttons: MessageDialog.Ok
-    }
-    MessageDialog {
-        id: clearDlg
-        title: "删除正版信息"
-        text: "已清空本地填写（尚未连接存档）。"
-        buttons: MessageDialog.Ok
-    }
-    MessageDialog {
-        id: saveDlg
-        title: "保存设置"
-        text: "设置 UI 已填写，持久化与登录逻辑尚未接入。"
-        buttons: MessageDialog.Ok
     }
 }

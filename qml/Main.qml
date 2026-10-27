@@ -20,6 +20,12 @@ ApplicationWindow {
 
     property url bgSource: typeof bgImageUrl !== "undefined" ? bgImageUrl : "bg_main.jpg"
     property string openDirPath: typeof gameDirPath !== "undefined" ? gameDirPath : "."
+    property var L: typeof launcher !== "undefined" ? launcher : null
+
+    function sendCmd(c) {
+        if (L)
+            L.cmd = c
+    }
 
     // Full-window background via Image (not Canvas paint of the UI).
     Image {
@@ -49,7 +55,6 @@ ApplicationWindow {
         }
     }
 
-    // Classic flat Win32-like button chrome (opaque gray, 1px border, square).
     component WinBtnBg: Rectangle {
         property bool down: false
         property bool hovered: false
@@ -58,9 +63,6 @@ ApplicationWindow {
         border.width: 1
         radius: 0
     }
-
-    // --- Right control cluster (tightened vs original 720×450 mask) ---
-    // Launch widened (≥100) so full 「启动游戏」 fits; side stack flush-top.
 
     Button {
         id: btnLaunch
@@ -71,6 +73,7 @@ ApplicationWindow {
         font.bold: true
         padding: 0
         leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+        enabled: !(L && L.busy === "1")
         background: WinBtnBg {
             down: btnLaunch.down
             hovered: btnLaunch.hovered
@@ -84,7 +87,11 @@ ApplicationWindow {
             elide: Text.ElideNone
             clip: false
         }
-        onClicked: launchDlg.open()
+        onClicked: {
+            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && L)
+                L.selectedVersion = combo.currentText
+            sendCmd("launch")
+        }
     }
 
     Button {
@@ -95,6 +102,7 @@ ApplicationWindow {
         font.pixelSize: 11
         padding: 0
         leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+        enabled: !(L && L.busy === "1")
         background: WinBtnBg {
             down: btnUpdate.down
             hovered: btnUpdate.hovered
@@ -108,7 +116,11 @@ ApplicationWindow {
             elide: Text.ElideNone
             clip: false
         }
-        onClicked: updateDlg.open()
+        onClicked: {
+            if (combo.currentText && combo.currentText.indexOf("(") !== 0 && L)
+                L.selectedVersion = combo.currentText
+            sendCmd("update")
+        }
     }
 
     Button {
@@ -139,7 +151,7 @@ ApplicationWindow {
         id: combo
         x: 400; y: 318; width: 120; height: 19
         z: 2
-        model: ["(默认)", "正式版", "快照预览版"]
+        model: typeof versionModel !== "undefined" ? versionModel : ["(加载中…)"]
         font.pixelSize: 11
         padding: 0
         leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
@@ -156,7 +168,7 @@ ApplicationWindow {
             font: combo.font
             color: "#000000"
             verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideNone
+            elide: Text.ElideRight
             clip: true
         }
         indicator: Item {
@@ -172,8 +184,8 @@ ApplicationWindow {
         }
         popup: Popup {
             y: combo.height
-            width: combo.width
-            implicitHeight: Math.min(contentItem.implicitHeight, 120)
+            width: Math.max(combo.width, 180)
+            implicitHeight: Math.min(contentItem.implicitHeight, 220)
             padding: 1
             contentItem: ListView {
                 clip: true
@@ -186,6 +198,26 @@ ApplicationWindow {
                 color: "#ffffff"
                 border.color: "#a0a0a0"
                 radius: 0
+            }
+        }
+        onActivated: function(index) {
+            if (L)
+                L.selectedVersion = combo.textAt(index)
+        }
+        Component.onCompleted: {
+            if (L && L.selectedVersion) {
+                var i = combo.find(L.selectedVersion)
+                if (i >= 0)
+                    combo.currentIndex = i
+            }
+        }
+        Connections {
+            target: L
+            function onSelectedVersionChanged() {
+                if (!L) return
+                var i = combo.find(L.selectedVersion)
+                if (i >= 0)
+                    combo.currentIndex = i
             }
         }
     }
@@ -212,6 +244,17 @@ ApplicationWindow {
                     Qt.openUrlExternally("file://" + p)
             }
         }
+    }
+
+    Text {
+        id: statusLine
+        x: 8; y: 408; width: 560; height: 16
+        z: 2
+        text: L ? (L.status || "") : ""
+        color: "#e8ffffff"
+        font.pixelSize: 10
+        elide: Text.ElideRight
+        verticalAlignment: Text.AlignVCenter
     }
 
     Text {
@@ -247,20 +290,6 @@ ApplicationWindow {
             elide: Text.ElideNone
         }
         onClicked: Qt.quit()
-    }
-
-    MessageDialog {
-        id: launchDlg
-        title: "启动游戏"
-        text: "启动逻辑尚未实现。\n下一步将接入旧版 Mojang Yggdrasil（邮箱/密码）登录。"
-        buttons: MessageDialog.Ok
-    }
-
-    MessageDialog {
-        id: updateDlg
-        title: "更新游戏"
-        text: "更新功能占位（未实现网络下载）。"
-        buttons: MessageDialog.Ok
     }
 
     SettingsDialog {
